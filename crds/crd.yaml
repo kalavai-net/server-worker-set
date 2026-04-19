@@ -1,0 +1,130 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: serverworkersets.kalavai.net
+spec:
+  group: kalavai.net
+  names:
+    kind: ServerWorkerSet
+    plural: serverworkersets
+    singular: serverworkerset
+    shortNames:
+      - sws
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - serverPodSpec
+                - workerPodSpec
+              properties:
+                replicas:
+                  type: integer
+                  minimum: 0
+                  description: Number of (server + N-worker) instances. KEDA scales this via /scale subresource.
+                workersPerInstance:
+                  type: integer
+                  minimum: 1
+                  default: 1
+                  description: Number of worker pods per server instance (fixed, not scaled by KEDA).
+                serverService:
+                  type: object
+                  description: Controls how server pods are exposed via a Kubernetes Service.
+                  properties:
+                    mode:
+                      type: string
+                      enum: ["per-instance", "global"]
+                      default: "per-instance"
+                      description: >
+                        "per-instance" (default) creates one headless Service per server instance,
+                        enabling stable pod DNS. "global" creates a single ClusterIP Service that
+                        selects all server pods and round-robins requests across them.
+                    port:
+                      type: integer
+                      minimum: 1
+                      maximum: 65535
+                      description: Port exposed on the global ClusterIP Service (required when mode=global).
+                    targetPort:
+                      type: integer
+                      minimum: 1
+                      maximum: 65535
+                      description: Container port to forward to. Defaults to port if omitted.
+                    stickySession:
+                      type: boolean
+                      default: false
+                      description: Enable client-IP-based session affinity on the global Service (mode=global only).
+                    stickySessionTimeoutSeconds:
+                      type: integer
+                      minimum: 1
+                      maximum: 86400
+                      default: 10800
+                      description: Timeout for sticky session affinity in seconds (default 3h).
+                    serviceType:
+                      type: string
+                      enum: ["ClusterIP", "NodePort"]
+                      default: "ClusterIP"
+                      description: >
+                        Kubernetes Service type for the global service.
+                        "ClusterIP" (default) is only reachable within the cluster.
+                        "NodePort" exposes the service on each node's IP at a static port.
+                serverPodSpec:
+                  type: object
+                  description: Pod spec for the single server pod.
+                  x-kubernetes-preserve-unknown-fields: true
+                workerPodSpec:
+                  type: object
+                  description: Pod spec for each worker pod.
+                  x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              properties:
+                replicas:
+                  type: integer
+                  description: Current number of ready instances (used by KEDA).
+                selector:
+                  type: string
+                  description: Label selector covering all pods in this ServerWorkerSet (used by KEDA).
+                readyInstances:
+                  type: integer
+                  description: Number of fully-ready instances (server + all workers ready).
+                instances:
+                  type: array
+                  description: Per-instance DNS addresses.
+                  items:
+                    type: object
+                    properties:
+                      index:
+                        type: integer
+                      serverAddress:
+                        type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+      additionalPrinterColumns:
+        - name: Instances
+          type: integer
+          jsonPath: .spec.replicas
+        - name: WorkersPerInstance
+          type: integer
+          jsonPath: .spec.workersPerInstance
+        - name: Ready
+          type: integer
+          jsonPath: .status.readyInstances
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+        scale:
+          specReplicasPath: .spec.replicas
+          statusReplicasPath: .status.replicas
+          labelSelectorPath: .status.selector

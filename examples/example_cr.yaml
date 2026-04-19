@@ -1,0 +1,64 @@
+apiVersion: kalavai.net/v1
+kind: ServerWorkerSet
+metadata:
+  name: my-llm-job
+  namespace: default
+spec:
+  replicas: 2              # number of (server + N-worker) instances — KEDA scales this
+  workersPerInstance: 2   # each instance has 1 server + 4 workers
+  # serverService controls how server pods are exposed.
+  # mode: "per-instance"   # (default) — one headless Service per server, stable pod DNS.
+  # mode: "global"          # — single ClusterIP Service round-robins across all servers.
+  serverService:
+    mode: global
+    port: 8080           # port on the ClusterIP service
+    targetPort: 8080     # container port (defaults to port)
+    stickySession: true  # pin a client IP to one server pod
+    stickySessionTimeoutSeconds: 10800  # 3 h default
+    serviceType: NodePort  # ClusterIP (default) or NodePort
+  serverPodSpec:
+    containers:
+      - name: server
+        image: python:3.12-slim
+        # SERVER_ADDRESS and WORKERS_ADDRESSES are injected per-instance automatically.
+        # e.g. SERVER_ADDRESS=my-llm-job-0-server-0.my-llm-job-0-server.default.svc.cluster.local
+        command: 
+        - bash
+        - -c
+        - |
+          echo "Starting server..."
+          apt update && apt install -y iputils-ping
+          echo "SERVER_ADDRESS: $SERVER_ADDRESS"
+          echo "WORKERS_ADDRESSES: $WORKERS_ADDRESSES"
+          echo "Pinging workers from server..."
+          IFS=',' read -ra WORKERS <<< "$WORKERS_ADDRESSES"
+          for WORKER in "${WORKERS[@]}"; do
+            WORKER=$(echo "$WORKER" | tr -d ' ')
+            echo -n "  Ping $WORKER: "
+            ping -c 3 "$WORKER" && echo "OK" || echo "FAILED"
+          done
+          python -m http.server 8080
+        ports:
+          - containerPort: 8080
+        # resources:
+        #   limits:
+        #     nvidia.com/gpu: "1"
+  workerPodSpec:
+    containers:
+      - name: worker
+        image: python:3.12-slim
+        # SERVER_ADDRESS points to THIS instance's server (not shared across instances).
+        command:
+          - bash
+          - -c
+          - |
+            echo "Starting worker..."
+            apt update && apt install -y iputils-ping
+            echo "SERVER_ADDRESS: $SERVER_ADDRESS"
+            echo "WORKERS_ADDRESSES: $WORKERS_ADDRESSES"
+            echo "Pinging server from worker..."
+            ping -c 3 "$SERVER_ADDRESS" && echo "Ping to server OK" || echo "Ping to server FAILED"
+            tail -f /dev/null
+        # resources:
+        #   limits:
+        #     nvidia.com/gpu: "1"
