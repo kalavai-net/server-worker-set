@@ -36,21 +36,15 @@ spec:
                   description: Number of worker pods per server instance (fixed, not scaled by KEDA).
                 serverService:
                   type: object
-                  description: Controls how server pods are exposed via a Kubernetes Service.
+                  description: >-
+                    Controls how the global server Service is exposed. A single Service selects
+                    all server pods and round-robins (or sticky-sessions) requests across them.
                   properties:
-                    mode:
-                      type: string
-                      enum: ["per-instance", "global"]
-                      default: "per-instance"
-                      description: >
-                        "per-instance" (default) creates one headless Service per server instance,
-                        enabling stable pod DNS. "global" creates a single ClusterIP Service that
-                        selects all server pods and round-robins requests across them.
                     port:
                       type: integer
                       minimum: 1
                       maximum: 65535
-                      description: Port exposed on the global ClusterIP Service (required when mode=global).
+                      description: Port exposed on the global server Service.
                     targetPort:
                       type: integer
                       minimum: 1
@@ -59,7 +53,7 @@ spec:
                     stickySession:
                       type: boolean
                       default: false
-                      description: Enable client-IP-based session affinity on the global Service (mode=global only).
+                      description: Enable client-IP-based session affinity on the global Service.
                     stickySessionTimeoutSeconds:
                       type: integer
                       minimum: 1
@@ -82,6 +76,127 @@ spec:
                   type: object
                   description: Pod spec for each worker pod.
                   x-kubernetes-preserve-unknown-fields: true
+                serverPolicy:
+                  type: array
+                  description: >
+                    List of event-action policies for server pods. When a server pod
+                    enters a matching state, the specified action is taken.
+                  items:
+                    type: object
+                    required:
+                      - event
+                      - action
+                    properties:
+                      event:
+                        type: string
+                        enum: ["PodFailed", "PodEvicted", "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerError", "OOMKilled", "Unknown"]
+                        description: Pod status event to watch for.
+                      action:
+                        type: string
+                        enum: ["RestartInstance", "ReplacePod"]
+                        description: >
+                          RestartInstance deletes and recreates all pods (server + workers) in the instance.
+                          ReplacePod deletes only the offending pod (statefulset will recreate it).
+                workerPolicy:
+                  type: array
+                  description: >
+                    List of event-action policies for worker pods. When a worker pod
+                    enters a matching state, the specified action is taken.
+                  items:
+                    type: object
+                    required:
+                      - event
+                      - action
+                    properties:
+                      event:
+                        type: string
+                        enum: ["PodFailed", "PodEvicted", "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerError", "OOMKilled", "Unknown"]
+                        description: Pod status event to watch for.
+                      action:
+                        type: string
+                        enum: ["RestartInstance", "ReplacePod"]
+                        description: >
+                          RestartInstance deletes and recreates all pods (server + workers) in the instance.
+                          ReplacePod deletes only the offending pod (statefulset will recreate it).
+                autoScaling:
+                  type: object
+                  description: >
+                    Optional HTTP-based autoscaling via KEDA HTTPScaledObject.
+                    Requires the KEDA HTTP add-on to be installed in the cluster.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                      description: Enable or disable autoscaling. When false, no HTTPScaledObject is created.
+                    hosts:
+                      type: array
+                      description: >
+                        List of hostnames that KEDA HTTP add-on matches to route and scale traffic.
+                        Corresponds to HTTPScaledObject.spec.hosts.
+                      items:
+                        type: string
+                    replicas:
+                      type: object
+                      description: Minimum and maximum replica count for autoscaling.
+                      properties:
+                        min:
+                          type: integer
+                          minimum: 0
+                          default: 0
+                          description: Minimum number of instances (can be 0 for scale-to-zero).
+                        max:
+                          type: integer
+                          minimum: 1
+                          description: Maximum number of instances.
+                    scaledownPeriod:
+                      type: integer
+                      minimum: 0
+                      default: 300
+                      description: >
+                        Seconds to wait after the last request before scaling down.
+                        Corresponds to HTTPScaledObject.spec.scaledownPeriod.
+                    scalingMetric:
+                      type: object
+                      description: >
+                        Scaling metric configuration passed verbatim to HTTPScaledObject.spec.scalingMetric.
+                        Supports requestRate or concurrency sub-objects.
+                      x-kubernetes-preserve-unknown-fields: true
+                ingress:
+                  type: object
+                  description: Optional Ingress that exposes the server Service externally.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                      description: When true, an Ingress resource is created for the server Service.
+                    ingressClassName:
+                      type: string
+                      description: Ingress class name (e.g. "nginx", "traefik"). Omitted if not set.
+                    host:
+                      type: string
+                      description: >
+                        Hostname for the Ingress rule (e.g. "myapp.example.com").
+                        Required when enabled is true.
+                    path:
+                      type: string
+                      default: "/"
+                      description: URL path prefix to expose. Defaults to "/".
+                    pathType:
+                      type: string
+                      enum: ["Prefix", "Exact", "ImplementationSpecific"]
+                      default: "Prefix"
+                      description: Kubernetes Ingress pathType. Defaults to "Prefix".
+                    tls:
+                      type: object
+                      description: Optional TLS configuration for the Ingress.
+                      properties:
+                        secretName:
+                          type: string
+                          description: Name of the TLS Secret containing the certificate and key.
+                    annotations:
+                      type: object
+                      description: Arbitrary annotations to add to the Ingress metadata.
+                      x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
               properties:

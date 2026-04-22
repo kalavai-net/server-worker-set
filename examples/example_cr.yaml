@@ -6,16 +6,36 @@ metadata:
 spec:
   replicas: 2              # number of (server + N-worker) instances — KEDA scales this
   workersPerInstance: 2   # each instance has 1 server + 4 workers
-  # serverService controls how server pods are exposed.
-  # mode: "per-instance"   # (default) — one headless Service per server, stable pod DNS.
-  # mode: "global"          # — single ClusterIP Service round-robins across all servers.
+  # serverService controls how the single shared server Service is exposed.
   serverService:
-    mode: global
     port: 8080           # port on the ClusterIP service
     targetPort: 8080     # container port (defaults to port)
     stickySession: true  # pin a client IP to one server pod
     stickySessionTimeoutSeconds: 10800  # 3 h default
     serviceType: NodePort  # ClusterIP (default) or NodePort
+  autoScaling:
+    enabled: false       # set to true to create an HTTPScaledObject (requires KEDA HTTP add-on)
+    hosts:
+      - myhost.com       # hostname(s) KEDA HTTP add-on routes traffic for
+    replicas:
+      min: 0             # 0 enables scale-to-zero
+      max: 3
+    scaledownPeriod: 300 # seconds idle before scaling down
+    scalingMetric:
+      requestRate:
+        granularity: 1s
+        targetValue: 1
+        window: 1m
+  ingress:
+    enabled: false       # set to true to create an Ingress for the server Service
+    ingressClassName: nginx
+    host: myhost.com
+    path: /
+    pathType: Prefix
+    # tls:
+    #   secretName: myhost-tls
+    # annotations:
+    #   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
   serverPodSpec:
     containers:
       - name: server

@@ -2,20 +2,26 @@
 
 A Kubernetes operator (KOPF / Python) that manages a **1-server + N-workers** topology as a single custom resource, scalable via KEDA.
 
+## Requirements
+
+- KEDA HTTP add-on is required for autoscaling.
+- Ingress controller required for external access via ingress.
+
 ## Architecture
 
 The unit of scale is a **complete (server + N-worker) instance**. `spec.replicas` controls how many instances exist; `spec.workersPerInstance` is fixed.
 
 ```
 ServerWorkerSet CR  (spec.replicas=2, spec.workersPerInstance=4)
+├── Service  <name>-service  (selects all server pods)
 ├── Instance 0
 │   ├── StatefulSet  <name>-0-server  (1 pod)
-│   │   └── Headless Service <name>-0-server
+│   │   └── Headless Service <name>-0-server  (stable pod DNS)
 │   └── StatefulSet  <name>-0-worker  (4 pods)
 │       └── Headless Service <name>-0-worker
 └── Instance 1
     ├── StatefulSet  <name>-1-server  (1 pod)
-    │   └── Headless Service <name>-1-server
+    │   └── Headless Service <name>-1-server  (stable pod DNS)
     └── StatefulSet  <name>-1-worker  (4 pods)
         └── Headless Service <name>-1-worker
 ```
@@ -41,28 +47,6 @@ The CRD exposes `/scale` with:
 - `statusReplicasPath: .status.replicas` — number of **fully ready** instances (server + all workers ready)
 - `labelSelectorPath: .status.selector` — label selector covering all pods in this CR
 
-A KEDA `ScaledObject` targeting this CR looks like:
-
-```yaml
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: my-llm-job-scaler
-spec:
-  scaleTargetRef:
-    apiVersion: kalavai.net/v1
-    kind: ServerWorkerSet
-    name: my-llm-job
-  minReplicaCount: 1
-  maxReplicaCount: 8
-  triggers:
-    - type: prometheus
-      metadata:
-        serverAddress: http://prometheus:9090
-        metricName: queue_depth
-        threshold: "5"
-        query: avg(queue_depth{job="my-llm-job"})
-```
 
 ## Quick start
 
@@ -101,3 +85,51 @@ kubectl apply --server-side -f https://github.com/kedacore/keda/releases/downloa
 Then install HTTP addon:
 
 helm install http-add-on kedacore/keda-add-ons-http --namespace keda
+
+
+## Gang scheduling with volcano
+
+When you apply a Deployment (or StatefulSet) with the scheduling.volcano.sh/group-min-member annotation, Volcano automatically creates a PodGroup resource. This PodGroup is responsible for enforcing the gang scheduling constraints for the pods belonging to your workload.
+
+
+## Failure Handling Policies
+
+Define per-pod-type policies to handle failures automatically. Configure `serverPolicy` and `workerPolicy` arrays with event-action pairs.
+
+### Available Events
+
+| Event | Description |
+|-------|-------------|
+| `PodFailed` | Pod phase is Failed |
+| `PodEvicted` | Pod was evicted (node pressure, spot termination, etc.) |
+| `CrashLoopBackOff` | Container is repeatedly crashing |
+| `ImagePullBackOff` | Cannot pull container image (back-off) |
+| `ErrImagePull` | Error pulling container image |
+| `CreateContainerError` | Failed to create container |
+| `OOMKilled` | Container killed due to out of memory |
+| `Unknown` | Pod phase is Unknown |
+
+### Available Actions
+
+| Action | Description |
+|--------|-------------|
+| `RestartInstance` | Delete and recreate **all** StatefulSets for the instance (server + all workers) |
+| `ReplacePod` | Delete only the offending pod (StatefulSet will automatically recreate it) |
+
+### Example
+
+```yaml
+spec:
+  serverPolicy:
+    - event: PodFailed
+      action: RestartInstance
+    - event: OOMKilled
+      action: ReplacePod
+  workerPolicy:
+    - event: PodFailed
+      action: ReplacePod
+    - event: CrashLoopBackOff
+      action: ReplacePod
+```
+
+See `examples/policy_example.yaml` for a complete configuration.
