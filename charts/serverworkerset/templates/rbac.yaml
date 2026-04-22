@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name}}-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name}}-role
+rules:
+  # Permissions for the CRD
+  - apiGroups: ["kalavai.net"]
+    resources: ["serverworkersets", "serverworkersets/status", "serverworkersets/finalizers"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  # Permissions for Kopf to manage events/finalizers
+  - apiGroups: [""]
+    resources: ["events", "secrets", "pods", "services", "pods/status"]
+    verbs: ["create", "get", "list", "watch", "patch"]
+  # all cluster
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "watch", "get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name}}-rb
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name}}-sa
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name}}-role
+  apiGroup: rbac.authorization.k8s.io

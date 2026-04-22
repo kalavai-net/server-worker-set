@@ -1,0 +1,12 @@
+image:
+  tag: null # when null, this is set to match the chart version
+  pullPolicy: IfNotPresent
+
+operator:
+  replicaCount: 1
+
+nodeSelector: {}
+# Example:
+# nodeSelector:
+#   kubernetes.io/arch: amd64
+#   node-type: worker

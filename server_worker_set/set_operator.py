@@ -3,6 +3,7 @@ import kubernetes
 import copy
 import logging
 import re
+import time
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -202,10 +203,6 @@ def _apply_object(api: _API, obj: dict, body):
             existing = api.apps.read_namespaced_stateful_set(obj_name, ns)
             obj["metadata"]["resourceVersion"] = existing.metadata.resource_version
             api.apps.replace_namespaced_stateful_set(obj_name, ns, obj)
-        elif kind == "Ingress":
-            existing = api.networking.read_namespaced_ingress(obj_name, ns)
-            obj["metadata"]["resourceVersion"] = existing.metadata.resource_version
-            api.networking.replace_namespaced_ingress(obj_name, ns, obj)
         elif kind == "HTTPScaledObject":
             group, version = "http.keda.sh", "v1alpha1"
             api.custom.get_namespaced_custom_object(group, version, ns, "httpscaledobjects", obj_name)
@@ -216,8 +213,6 @@ def _apply_object(api: _API, obj: dict, body):
                 api.core.create_namespaced_service(ns, obj)
             elif kind == "StatefulSet":
                 api.apps.create_namespaced_stateful_set(ns, obj)
-            elif kind == "Ingress":
-                api.networking.create_namespaced_ingress(ns, obj)
             elif kind == "HTTPScaledObject":
                 group, version = "http.keda.sh", "v1alpha1"
                 api.custom.create_namespaced_custom_object(group, version, ns, "httpscaledobjects", obj)
@@ -231,8 +226,6 @@ def _delete_if_exists(api: _API, kind: str, obj_name: str, namespace: str):
             api.core.delete_namespaced_service(obj_name, namespace)
         elif kind == "StatefulSet":
             api.apps.delete_namespaced_stateful_set(obj_name, namespace)
-        elif kind == "Ingress":
-            api.networking.delete_namespaced_ingress(obj_name, namespace)
         elif kind == "HTTPScaledObject":
             api.custom.delete_namespaced_custom_object(
                 "http.keda.sh", "v1alpha1", namespace, "httpscaledobjects", obj_name
@@ -246,10 +239,6 @@ def _http_scaled_object_name(cr_name: str) -> str:
     return f"{cr_name}-http-scaler"
 
 
-def _ingress_name(cr_name: str) -> str:
-    return f"{cr_name}-ingress"
-
-
 def _build_http_scaled_object(
     name: str,
     namespace: str,
@@ -257,6 +246,7 @@ def _build_http_scaled_object(
     service_name: str,
     service_port: int,
     hosts: list,
+    path_prefixes: list,
     replicas_min: int,
     replicas_max: int,
     scaledown_period: int,
@@ -271,7 +261,7 @@ def _build_http_scaled_object(
         },
         "spec": {
             "hosts": hosts,
-            "pathPrefixes": ["/"],
+            "pathPrefixes": path_prefixes,
             "scaleTargetRef": {
                 "name": cr_name,
                 "kind": "ServerWorkerSet",
@@ -289,58 +279,6 @@ def _build_http_scaled_object(
     if scaling_metric:
         obj["spec"]["scalingMetric"] = scaling_metric
     return obj
-
-
-def _build_ingress(
-    name: str,
-    namespace: str,
-    service_name: str,
-    service_port: int,
-    host: str,
-    path: str = "/",
-    path_type: str = "Prefix",
-    ingress_class: str = None,
-    tls_secret: str = None,
-    annotations: dict = None,
-) -> dict:
-    metadata: dict = {"name": name, "namespace": namespace}
-    if annotations:
-        metadata["annotations"] = annotations
-    if ingress_class:
-        metadata["annotations"] = dict(metadata.get("annotations") or {})
-        metadata["annotations"].setdefault("kubernetes.io/ingress.class", ingress_class)
-
-    rule = {
-        "host": host,
-        "http": {
-            "paths": [
-                {
-                    "path": path,
-                    "pathType": path_type,
-                    "backend": {
-                        "service": {
-                            "name": service_name,
-                            "port": {"number": service_port},
-                        }
-                    },
-                }
-            ]
-        },
-    }
-
-    spec: dict = {"rules": [rule]}
-    if ingress_class:
-        spec["ingressClassName"] = ingress_class
-    if tls_secret:
-        spec["tls"] = [{"hosts": [host], "secretName": tls_secret}]
-
-    return {
-        "apiVersion": "networking.k8s.io/v1",
-        "kind": "Ingress",
-        "metadata": metadata,
-        "spec": spec,
-    }
-
 
 # ---------------------------------------------------------------------------
 # Core reconciliation logic
@@ -432,6 +370,10 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
     )
     _apply_object(api, global_svc, body)
 
+    # Check current status to detect missing instances (e.g., after restart policy)
+    status = body.get("status", {})
+    current_replicas = status.get("replicas", 0)
+    
     # Reconcile desired instances
     instance_status = []
     for idx in range(desired_instances):
@@ -464,7 +406,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
     keda_selector = f"{OWNER_LABEL}={name}"
 
     # -----------------------------------------------------------------------
-    # Autoscaling — HTTPScaledObject
+    # Autoscaling - HTTPScaledObject
     # -----------------------------------------------------------------------
     as_spec = spec.get("autoScaling", {})
     as_enabled = as_spec.get("enabled", False)
@@ -472,6 +414,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
 
     if as_enabled:
         as_hosts = as_spec.get("hosts", [])
+        as_path_prefixes = as_spec.get("pathPrefixes", ["/"])
         as_replicas = as_spec.get("replicas", {})
         as_min = as_replicas.get("min", 0)
         as_max = as_replicas.get("max", desired_instances)
@@ -481,47 +424,26 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
         hso = _build_http_scaled_object(
             hso_name, namespace, name,
             global_svc_name, svc_port,
-            as_hosts, as_min, as_max, as_scaledown, as_metric,
+            as_hosts, as_path_prefixes, as_min, as_max, as_scaledown, as_metric,
         )
         _apply_object(api, hso, body)
         logger.info("Reconciled HTTPScaledObject %s/%s", namespace, hso_name)
     else:
         _delete_if_exists(api, "HTTPScaledObject", hso_name, namespace)
 
-    # -----------------------------------------------------------------------
-    # Ingress
-    # -----------------------------------------------------------------------
-    ing_spec = spec.get("ingress", {})
-    ing_enabled = ing_spec.get("enabled", False)
-    ing_name = _ingress_name(name)
-
-    if ing_enabled:
-        ing_host = ing_spec.get("host", "")
-        ing_path = ing_spec.get("path", "/")
-        ing_path_type = ing_spec.get("pathType", "Prefix")
-        ing_class = ing_spec.get("ingressClassName")
-        ing_tls_secret = ing_spec.get("tls", {}).get("secretName")
-        ing_annotations = ing_spec.get("annotations")
-        global_svc_name = _global_server_svc(name)
-        ingress = _build_ingress(
-            ing_name, namespace,
-            global_svc_name, svc_port,
-            ing_host, ing_path, ing_path_type,
-            ing_class, ing_tls_secret, ing_annotations,
-        )
-        _apply_object(api, ingress, body)
-        logger.info("Reconciled Ingress %s/%s", namespace, ing_name)
-    else:
-        _delete_if_exists(api, "Ingress", ing_name, namespace)
-
-    patch.status["replicas"] = desired_instances
+    # Update status - don't set replicas to desired_instances immediately
+    # Let sync_status handle the actual count based on existing StatefulSets
     patch.status["readyInstances"] = 0
     patch.status["selector"] = keda_selector
     patch.status["instances"] = instance_status
+    
+    # Only set replicas if we're creating from scratch (no existing status)
+    if not status:
+        patch.status["replicas"] = desired_instances
 
     logger.info(
-        "Reconciled %s/%s: %d instance(s), %d worker(s) each",
-        namespace, name, desired_instances, workers_per_instance,
+        "Reconciled %s/%s: %d desired instance(s), %d worker(s) each (current: %d)",
+        namespace, name, desired_instances, workers_per_instance, current_replicas,
     )
 
 
@@ -533,27 +455,79 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
 def sync_status(name, namespace, spec, patch, **kwargs):
     desired_instances = spec.get("replicas", 1)
     workers_per_instance = spec.get("workersPerInstance", 1)
-    print("**** SYNC STATUS ****", desired_instances)
     api = _API()
 
     ready_instances = 0
+    existing_instances = 0
+    
+    # Check each desired instance to see if StatefulSets exist and are ready
     for idx in range(desired_instances):
         server_sts_name = _inst_server_sts(name, idx)
         worker_sts_name = _inst_worker_sts(name, idx)
+        
+        server_exists = False
+        worker_exists = False
+        
         try:
             srv = api.apps.read_namespaced_stateful_set(server_sts_name, namespace)
-            wkr = api.apps.read_namespaced_stateful_set(worker_sts_name, namespace)
+            server_exists = True
         except kubernetes.client.exceptions.ApiException as e:
             if e.status == 404:
-                continue
-            raise
-        server_ready = (srv.status.ready_replicas or 0) >= 1
-        workers_ready = (wkr.status.ready_replicas or 0) >= workers_per_instance
-        if server_ready and workers_ready:
-            ready_instances += 1
+                # Server StatefulSet doesn't exist - will be recreated by reconcile
+                pass
+            else:
+                raise
+        
+        try:
+            wkr = api.apps.read_namespaced_stateful_set(worker_sts_name, namespace)
+            worker_exists = True
+        except kubernetes.client.exceptions.ApiException as e:
+            if e.status == 404:
+                # Worker StatefulSet doesn't exist - will be recreated by reconcile
+                pass
+            else:
+                raise
+        
+        # Only count as existing if both StatefulSets exist
+        if server_exists and worker_exists:
+            existing_instances += 1
+            server_ready = (srv.status.ready_replicas or 0) >= 1
+            workers_ready = (wkr.status.ready_replicas or 0) >= workers_per_instance
+            if server_ready and workers_ready:
+                ready_instances += 1
 
-    patch.status["replicas"] = ready_instances
+    # Update status to reflect actual existing instances, not desired instances
+    # This allows the reconcile loop to recreate deleted StatefulSets
+    patch.status["replicas"] = existing_instances
     patch.status["readyInstances"] = ready_instances
+    
+    logger.info(
+        "Status sync for %s/%s: %d existing, %d ready instances (desired: %d)",
+        namespace, name, existing_instances, ready_instances, desired_instances
+    )
+    
+    # If instances are missing, trigger a reconcile to recreate them
+    if existing_instances < desired_instances:
+        logger.info(
+            "Detected missing instances (%d < %d), triggering reconcile to recreate them",
+            existing_instances, desired_instances
+        )
+        try:
+            # Trigger reconcile by updating the CR with a timestamp annotation
+            cr = api.custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, name)
+            annotations = cr.get("metadata", {}).get("annotations", {})
+            annotations["trigger-reconcile"] = str(int(time.time()))
+            if "metadata" not in cr:
+                cr["metadata"] = {}
+            if "annotations" not in cr["metadata"]:
+                cr["metadata"]["annotations"] = {}
+            cr["metadata"]["annotations"].update(annotations)
+            api.custom.patch_namespaced_custom_object(
+                GROUP, VERSION, namespace, PLURAL, name, cr
+            )
+            logger.info("Triggered reconcile for missing instances")
+        except Exception as e:
+            logger.warning("Failed to trigger reconcile for missing instances: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -577,6 +551,10 @@ def _detect_pod_event(pod: dict) -> Optional[str]:
     status = pod.get("status", {})
     phase = status.get("phase", "")
     
+    # Debug logging
+    pod_name = pod.get("metadata", {}).get("name", "unknown")
+    logger.info(f"Detecting event for pod {pod_name}: phase={phase}, status={status}")
+    
     # Check container statuses for detailed failure reasons
     for container_status in status.get("containerStatuses", []):
         state = container_status.get("state", {})
@@ -586,6 +564,7 @@ def _detect_pod_event(pod: dict) -> Optional[str]:
         if terminated:
             exit_code = terminated.get("exitCode", 0)
             reason = terminated.get("reason", "")
+            logger.info(f"Container terminated: reason={reason}, exit_code={exit_code}")
             if reason == "OOMKilled" or exit_code == 137:
                 return "OOMKilled"
             if reason == "Error" or exit_code != 0:
@@ -595,6 +574,7 @@ def _detect_pod_event(pod: dict) -> Optional[str]:
         waiting = state.get("waiting", {})
         if waiting:
             reason = waiting.get("reason", "")
+            logger.info(f"Container waiting: reason={reason}")
             if reason == "CrashLoopBackOff":
                 return "CrashLoopBackOff"
             if reason == "ImagePullBackOff":
@@ -610,11 +590,17 @@ def _detect_pod_event(pod: dict) -> Optional[str]:
     if phase == "Unknown":
         return "Unknown"
     
+    # Check for deletion timestamp - indicates pod was deleted/terminated
+    if pod.get("metadata", {}).get("deletionTimestamp"):
+        logger.info(f"Pod {pod_name} has deletionTimestamp - treating as PodFailed")
+        return "PodFailed"
+    
     # Check conditions for eviction
     for condition in status.get("conditions", []):
         if condition.get("type") == "DisruptionTarget" and condition.get("status") == "True":
             return "PodEvicted"
     
+    logger.info(f"No event detected for pod {pod_name}")
     return None
 
 
@@ -676,6 +662,20 @@ def _execute_restart_instance(api: _API, cr_name: str, instance_idx: int, namesp
     except kubernetes.client.exceptions.ApiException as e:
         if e.status != 404:
             logger.error("Failed to delete worker StatefulSet %s: %s", worker_sts, e)
+    
+    # Trigger immediate reconcile to recreate the StatefulSets
+    try:
+        cr = api.custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, cr_name)
+        # Force a status update to trigger reconcile
+        if "status" not in cr:
+            cr["status"] = {}
+        cr["status"]["lastRestart"] = f"instance-{instance_idx}"
+        api.custom.patch_namespaced_custom_object_status(
+            GROUP, VERSION, namespace, PLURAL, cr_name, cr
+        )
+        logger.info("Triggered reconcile after restart for instance %d", instance_idx)
+    except Exception as e:
+        logger.warning("Failed to trigger immediate reconcile: %s", e)
 
 
 def _execute_replace_pod(api: _API, pod_name: str, namespace: str, role: str, cr_name: str, instance_idx: int):
@@ -714,7 +714,7 @@ def _apply_policy(api: _API, event: str, policies: List[Dict], owner_info: dict)
     return False
 
 
-@kopf.on.event("v1", "pods")
+@kopf.on.event("v1", "pods", labels={OWNER_LABEL: kopf.PRESENT})
 def on_pod_event(body, event, **kwargs):
     """Watch for pod events and apply configured policies."""
     # Only process pods belonging to our operator

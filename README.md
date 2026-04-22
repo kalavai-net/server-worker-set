@@ -62,6 +62,21 @@ kopf run server_worker_set/set_operator.py --namespace default
 kubectl apply -f example_cr.yaml
 ```
 
+## Install from local repo
+
+```bash
+helm install my-release ./chart
+```
+
+## Install from published chart
+
+```bash
+helm repo add server-worker-set https://kalavai-net.github.io/server-worker-set/
+helm repo update
+
+helm install my-release server-worker-set
+```
+
 ## Deletion
 
 Deleting the `ServerWorkerSet` CR automatically garbage-collects all child StatefulSets and Services via Kubernetes `ownerReferences`.
@@ -132,4 +147,4 @@ spec:
       action: ReplacePod
 ```
 
-See `examples/policy_example.yaml` for a complete configuration.
+See `examples/serverworkerset.yaml` for a complete configuration.

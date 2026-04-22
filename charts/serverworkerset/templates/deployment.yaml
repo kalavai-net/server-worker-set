@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name}}-deployment
+spec:
+  replicas: {{ .Values.operator.replicaCount }}
+  selector:
+    matchLabels:
+      app: serverworkerset-operator
+  template:
+    metadata:
+      labels:
+        app: serverworkerset-operator
+    spec:
+      serviceAccountName: {{ .Release.Name}}-sa
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: operator
+        {{- if .Values.image.tag }}
+          image: "ghcr.io/kalavai-net/serverworkerset-operator:{{ .Values.image.tag }}"
+        {{- else }}
+          image: "ghcr.io/kalavai-net/serverworkerset-operator:{{ .Chart.Version }}"
+        {{- end }}
+          # Kopf command to run the script
+          command: 
+          - sh
+          - -c
+          - |
+            kopf run /app/server_worker_set/set_operator.py --all-namespaces

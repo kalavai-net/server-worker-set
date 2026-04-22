@@ -135,6 +135,14 @@ spec:
                         Corresponds to HTTPScaledObject.spec.hosts.
                       items:
                         type: string
+                    pathPrefixes:
+                      type: array
+                      description: >
+                        List of path prefixes that KEDA HTTP add-on listens to for scaling.
+                        Corresponds to HTTPScaledObject.spec.pathPrefixes.
+                      items:
+                        type: string
+                      default: ["/"]
                     replicas:
                       type: object
                       description: Minimum and maximum replica count for autoscaling.
@@ -160,42 +168,6 @@ spec:
                       description: >
                         Scaling metric configuration passed verbatim to HTTPScaledObject.spec.scalingMetric.
                         Supports requestRate or concurrency sub-objects.
-                      x-kubernetes-preserve-unknown-fields: true
-                ingress:
-                  type: object
-                  description: Optional Ingress that exposes the server Service externally.
-                  properties:
-                    enabled:
-                      type: boolean
-                      default: false
-                      description: When true, an Ingress resource is created for the server Service.
-                    ingressClassName:
-                      type: string
-                      description: Ingress class name (e.g. "nginx", "traefik"). Omitted if not set.
-                    host:
-                      type: string
-                      description: >
-                        Hostname for the Ingress rule (e.g. "myapp.example.com").
-                        Required when enabled is true.
-                    path:
-                      type: string
-                      default: "/"
-                      description: URL path prefix to expose. Defaults to "/".
-                    pathType:
-                      type: string
-                      enum: ["Prefix", "Exact", "ImplementationSpecific"]
-                      default: "Prefix"
-                      description: Kubernetes Ingress pathType. Defaults to "Prefix".
-                    tls:
-                      type: object
-                      description: Optional TLS configuration for the Ingress.
-                      properties:
-                        secretName:
-                          type: string
-                          description: Name of the TLS Secret containing the certificate and key.
-                    annotations:
-                      type: object
-                      description: Arbitrary annotations to add to the Ingress metadata.
                       x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
