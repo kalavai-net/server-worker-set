@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name}}-cleanup
+  annotations:
+    # This is the magic line that makes it a hook
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-5" # Run this BEFORE other things are deleted
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      serviceAccountName: {{ .Release.Name}}-sa
+      restartPolicy: Never
+      containers:
+        - name: kubectl
+          image: bitnami/kubectl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Removing finalizers from all serverworkerset..."
+              # Patch all instances in the namespace
+              kubectl get serverworkerset.kalavai.net -n {{ .Release.Namespace }} -o name | \
+              xargs -I {} kubectl patch {} -n {{ .Release.Namespace }} -p '{"metadata":{"finalizers":[]}}' --type=merge || true
+              
+              echo "Removing finalizers from the CRD..."
+              kubectl patch crd serverworkerset.kalavai.net -p '{"metadata":{"finalizers":[]}}' --type=merge || true
