@@ -118,6 +118,14 @@ spec:
                         description: >
                           RestartInstance deletes and recreates all pods (server + workers) in the instance.
                           ReplacePod deletes only the offending pod (statefulset will recreate it).
+                labels:
+                  type: object
+                  description: >
+                    Custom labels to apply to all resources created by this ServerWorkerSet.
+                    These labels will be merged with the default system labels.
+                  additionalProperties:
+                    type: string
+                  x-kubernetes-preserve-unknown-fields: true
                 autoScaling:
                   type: object
                   description: >

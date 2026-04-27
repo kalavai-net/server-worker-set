@@ -77,6 +77,14 @@ helm repo update
 helm install my-release server-worker-set
 ```
 
+## Repo requirements
+
+To publish the chart to the repo, you need to have the following requirements:
+- GitHub Pages enabled in the repository settings
+- A `gh-pages` branch in the repository
+- A secret GH_RELEASER_TOKEN in the repository secrets with a valid GitHub token
+
+
 ## Deletion
 
 Deleting the `ServerWorkerSet` CR automatically garbage-collects all child StatefulSets and Services via Kubernetes `ownerReferences`.
@@ -90,17 +98,32 @@ Use HTTP scaler from KEDA to scale based on HTTP requests: https://github.com/ke
 
 Install KEDA
 
+```bash
 helm repo add kedacore https://kedacore.github.io/charts
 helm repo update
+helm install keda kedacore/keda --namespace keda --create-namespace --set nodeSelector."kalavai/role"=server --set operator.nodeSelector."kalavai/role"=server --set webhooks.nodeSelector."kalavai/role"=server --set metricsServer.nodeSelector."kalavai/role"=server
+```
 
-Alternatively, install keda with yaml:
+Then install HTTP addon (using affinity and replicas to prefer server nodes):
 
-kubectl apply --server-side -f https://github.com/kedacore/keda/releases/download/v2.19.0/keda-2.19.0.yaml
+```bash
+helm install http-add-on kedacore/keda-add-ons-http --namespace keda --values httpaddon_values.yaml
+```
 
-Then install HTTP addon:
+Uninstall:
 
-helm install http-add-on kedacore/keda-add-ons-http --namespace keda
+```bash
+helm uninstall keda --namespace keda
+helm uninstall http-add-on --namespace keda
+kubectl delete namespace keda
+```
 
+Force delete namespace (otherwise resources may hang and fail subsequent reinstalls):
+
+```bash
+kubectl get namespace keda -o json | jq '.spec.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/keda/finalize" -f -
+kubectl delete namespace keda
+```
 
 ## Gang scheduling with volcano
 

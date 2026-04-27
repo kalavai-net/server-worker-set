@@ -52,20 +52,28 @@ def _inst_server_address(cr_name: str, idx: int, namespace: str) -> str:
 
 
 
-def _inst_server_labels(cr_name: str, idx: int) -> dict:
-    return {
+def _inst_server_labels(cr_name: str, idx: int, custom_labels: dict = None) -> dict:
+    labels = {
         OWNER_LABEL: cr_name,
         "serverworkerset-instance": str(idx),
         "serverworkerset-role": "server",
+        "serverworkerset-id": f"{cr_name}-{idx}",
     }
+    if custom_labels:
+        labels.update(custom_labels)
+    return labels
 
 
-def _inst_worker_labels(cr_name: str, idx: int) -> dict:
-    return {
+def _inst_worker_labels(cr_name: str, idx: int, custom_labels: dict = None) -> dict:
+    labels = {
         OWNER_LABEL: cr_name,
         "serverworkerset-instance": str(idx),
         "serverworkerset-role": "worker",
+        "serverworkerset-id": f"{cr_name}-{idx}",
     }
+    if custom_labels:
+        labels.update(custom_labels)
+    return labels
 
 
 # Label key shared by ALL server pods of a CR (used by the global service selector)
@@ -251,13 +259,19 @@ def _build_http_scaled_object(
     replicas_max: int,
     scaledown_period: int,
     scaling_metric: dict,
+    custom_labels: dict = None,
 ) -> dict:
+    labels = {}
+    if custom_labels:
+        labels.update(custom_labels)
+    
     obj = {
         "apiVersion": "http.keda.sh/v1alpha1",
         "kind": "HTTPScaledObject",
         "metadata": {
             "name": name,
             "namespace": namespace,
+            "labels": labels,
         },
         "spec": {
             "hosts": hosts,
@@ -292,12 +306,13 @@ def _reconcile_instance(
     workers_per_instance: int,
     server_pod_spec: dict,
     worker_pod_spec: dict,
+    custom_labels: dict,
     body,
 ):
     """Ensure the StatefulSets and Services for instance `idx` exist and are up to date."""
     server_addr = _inst_server_address(cr_name, idx, namespace)
     svc = _inst_worker_svc(cr_name, idx)
-    workers_addresses = ",".join(
+    workers_addresses = "\n".join(
         f"{_inst_worker_sts(cr_name, idx)}-{j}.{svc}.{namespace}.svc.cluster.local"
         for j in range(workers_per_instance)
     )
@@ -305,8 +320,8 @@ def _reconcile_instance(
     srv_spec = _inject_dns_env(server_pod_spec, server_addr, workers_addresses)
     wkr_spec = _inject_dns_env(worker_pod_spec, server_addr, workers_addresses)
 
-    server_sel = _inst_server_labels(cr_name, idx)
-    worker_sel = _inst_worker_labels(cr_name, idx)
+    server_sel = _inst_server_labels(cr_name, idx, custom_labels)
+    worker_sel = _inst_worker_labels(cr_name, idx, custom_labels)
 
     objs = [
         _build_headless_service(_inst_server_svc(cr_name, idx), namespace, server_sel),
@@ -348,6 +363,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
     workers_per_instance = spec.get("workersPerInstance", 1)
     server_pod_spec = dict(spec["serverPodSpec"])
     worker_pod_spec = dict(spec["workerPodSpec"])
+    custom_labels = dict(spec.get("labels", {}))
 
     svc_spec = spec.get("serverService", {})
     svc_port = svc_spec.get("port", 8080)
@@ -363,6 +379,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
         OWNER_LABEL: name,
         "serverworkerset-role": "server",
     }
+    global_selector.update(custom_labels)
     global_svc = _build_global_service(
         _global_server_svc(name), namespace, global_selector,
         svc_port, svc_target_port, svc_sticky, svc_sticky_timeout,
@@ -379,7 +396,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
     for idx in range(desired_instances):
         _reconcile_instance(
             api, name, idx, namespace, workers_per_instance,
-            server_pod_spec, worker_pod_spec, body,
+            server_pod_spec, worker_pod_spec, custom_labels, body,
         )
         instance_status.append({
             "index": idx,
@@ -425,6 +442,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
             hso_name, namespace, name,
             global_svc_name, svc_port,
             as_hosts, as_path_prefixes, as_min, as_max, as_scaledown, as_metric,
+            custom_labels,
         )
         _apply_object(api, hso, body)
         logger.info("Reconciled HTTPScaledObject %s/%s", namespace, hso_name)

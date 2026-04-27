@@ -1,0 +1,45 @@
+# Configure the Interceptor to prefer server nodes
+operator:
+  replicas: 1
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: "kalavai/role"
+            operator: In
+            values:
+            - "server"
+
+# Configure the Interceptor to prefer server nodes
+interceptor:
+  replicas:
+    min: 3
+    max: 5
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: "kalavai/role"
+            operator: In
+            values:
+            - "server"
+
+# (Optional) Apply the same logic to the scaler and operator if you want 
+# them to follow the same preference
+scaler:
+  replicas: 3
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: "kalavai/role"
+            operator: In
+            values:
+            - "server"
+

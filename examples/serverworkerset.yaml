@@ -6,6 +6,9 @@ metadata:
 spec:
   replicas: 2              # number of (server + N-worker) instances — KEDA scales this
   workersPerInstance: 2   # each instance has 1 server + 4 workers
+  # Custom labels applied to all resources created by this ServerWorkerSet
+  labels:
+    custom-label: "value"
   # Server policies - applied when server pods encounter issues
   serverPolicy:
     # Restart the entire instance (server + all workers) if server fails
