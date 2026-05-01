@@ -125,6 +125,56 @@ kubectl get namespace keda -o json | jq '.spec.finalizers = []' | kubectl replac
 kubectl delete namespace keda
 ```
 
+### Test autoscaling
+
+Autoscaling works with both ingress and NodePort services. When using NodePort, requests have to be tagged with the host to match one of the hosts described in hosts.
+
+Example:
+
+```yaml
+apiVersion: kalavai.net/v1
+kind: ServerWorkerSet
+spec:
+  serverService:
+    port: 8080
+    targetPort: 8080
+    type: NodePort
+  autoScaling:
+    enabled: true
+    hosts: # Hosts to monitor and route requests to the server service in the ServerWorkerSet
+      - test.kalavai.net
+  ...
+```
+
+Then add the appropriate header to your request:
+
+```bash
+curl -H "Host: test.kalavai.net" <clusterIP>:8080
+```
+
+When using an ingress, the host is automatically set and thus requests do not require the host header. This is recommended for production.
+
+Example:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-sws-ingress
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: test.kalavai.net # This must match one of the hosts in the ServerWorkerSet
+    http:
+      paths:
+      - backend:
+          service:
+            name: my-sws-service
+            port:
+              number: 8080 # match internal port
+        path: /
+```
+
 ## Gang scheduling with volcano
 
 When you apply a Deployment (or StatefulSet) with the scheduling.volcano.sh/group-min-member annotation, Volcano automatically creates a PodGroup resource. This PodGroup is responsible for enforcing the gang scheduling constraints for the pods belonging to your workload.
