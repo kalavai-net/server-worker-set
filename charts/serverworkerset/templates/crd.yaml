@@ -60,7 +60,7 @@ spec:
                       maximum: 86400
                       default: 10800
                       description: Timeout for sticky session affinity in seconds (default 3h).
-                    serviceType:
+                    type:
                       type: string
                       enum: ["ClusterIP", "NodePort"]
                       default: "ClusterIP"

@@ -33,7 +33,7 @@ spec:
     targetPort: 8080     
     stickySession: true  
     stickySessionTimeoutSeconds: 10800  
-    serviceType: NodePort  
+    type: NodePort  
   autoScaling:
     enabled: false       
     hosts:

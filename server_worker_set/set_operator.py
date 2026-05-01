@@ -370,7 +370,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
     svc_target_port = svc_spec.get("targetPort", svc_port)
     svc_sticky = svc_spec.get("stickySession", False)
     svc_sticky_timeout = svc_spec.get("stickySessionTimeoutSeconds", 10800)
-    svc_type = svc_spec.get("serviceType", "ClusterIP")
+    svc_type = svc_spec.get("type", "ClusterIP")
 
     api = _API()
 
