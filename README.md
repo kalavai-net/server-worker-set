@@ -1,11 +1,27 @@
-# server-worker-set
+# Server-worker-set for Kubernetes
 
 A Kubernetes operator (KOPF / Python) that manages a **1-server + N-workers** topology as a single custom resource, scalable via KEDA.
 
+## Why
+
+The ServerWorkerSet is useful for applications that require a server-worker architecture where the server and workers need to be scaled together as a unit. An example of this is a multi-node LLM deployment with vLLM, SGLang or llama.cpp, where one server instance needs to connect directly with multiple workers; scaling such deployments requires coordinated scaling of one server and N workers (1-N scaling).
+
+Coordinated 1-N scaling and the ability to autoscale based on workload are the core functionalities of the ServerWorkerSet. It's also what sets it apart from other similar projects:
+
+- [Volcano Job](https://volcano.sh/en/docs/vcjob/): great for batch processing but not designed to autoscale.
+- [LeaderWorkerSet](https://github.com/kubernetes-sigs/lws): focuses on leader-election and coordination but doesn't provide the same level of autoscaling and load balancing capabilities.
+
+
+## Core features
+
+- **1-N scaling**: scale 1 server and N workers together as a unit.
+- **Autoscaling**: implements the /scale endpoint, compatible with KEDA scale triggers.
+- **Load balancing via single service**: all instances share the same service for client connections.
+- **Recovery policies**: configurable restart policies for server and worker pods.
+
 ## Requirements
 
-- KEDA HTTP add-on is required for autoscaling.
-- Ingress controller required for external access via ingress.
+- KEDA and its HTTP add-on are required for autoscaling.
 
 ## Architecture
 
@@ -92,11 +108,9 @@ Deleting the `ServerWorkerSet` CR automatically garbage-collects all child State
 
 ## Autoscaling
 
-Use KEDA for autoscaling based on metrics like queue depth or request rate: https://github.com/kedacore/keda
+Only required if `spec.autoScaling.enabled` is set to `true`.
 
-Use HTTP scaler from KEDA to scale based on HTTP requests: https://github.com/kedacore/http-add-on/blob/main/docs/install.md
-
-Install KEDA
+[KEDA](https://github.com/kedacore/keda) and the [HTTP addon](https://github.com/kedacore/http-add-on) are required for autoscaling. Install them:
 
 ```bash
 helm repo add kedacore https://kedacore.github.io/charts
@@ -135,7 +149,7 @@ Example:
 apiVersion: kalavai.net/v1
 kind: ServerWorkerSet
 spec:
-  serverService:
+  service:
     port: 8080
     targetPort: 8080
     type: NodePort
@@ -174,10 +188,6 @@ spec:
               number: 8080 # match internal port
         path: /
 ```
-
-## Gang scheduling with volcano
-
-When you apply a Deployment (or StatefulSet) with the scheduling.volcano.sh/group-min-member annotation, Volcano automatically creates a PodGroup resource. This PodGroup is responsible for enforcing the gang scheduling constraints for the pods belonging to your workload.
 
 
 ## Failure Handling Policies
@@ -221,3 +231,9 @@ spec:
 ```
 
 See `examples/serverworkerset.yaml` for a complete configuration.
+
+
+
+## TODO
+
+- Support for gang scheduling
