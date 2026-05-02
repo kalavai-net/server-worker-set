@@ -361,11 +361,11 @@ def _delete_instance(api: _API, cr_name: str, idx: int, namespace: str):
 def reconcile(spec, name, namespace, body, patch, **kwargs):
     desired_instances = spec.get("replicas", 1)
     workers_per_instance = spec.get("workersPerInstance", 1)
-    server_pod_spec = dict(spec["serverPodSpec"])
-    worker_pod_spec = dict(spec["workerPodSpec"])
+    server_pod_spec = dict(spec["server"]["template"])
+    worker_pod_spec = dict(spec["worker"]["template"])
     custom_labels = dict(spec.get("labels", {}))
 
-    svc_spec = spec.get("serverService", {})
+    svc_spec = spec.get("service", {})
     svc_port = svc_spec.get("port", 8080)
     svc_target_port = svc_spec.get("targetPort", svc_port)
     svc_sticky = svc_spec.get("stickySession", False)
@@ -649,8 +649,8 @@ def _get_crd_policies(api: _API, namespace: str, cr_name: str) -> Dict[str, List
         )
         spec = cr.get("spec", {})
         return {
-            "server": spec.get("serverPolicy", []),
-            "worker": spec.get("workerPolicy", []),
+            "server": spec.get("server", {}).get("policy", []),
+            "worker": spec.get("worker", {}).get("policy", []),
         }
     except kubernetes.client.exceptions.ApiException as e:
         if e.status == 404:

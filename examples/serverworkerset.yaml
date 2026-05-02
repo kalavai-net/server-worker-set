@@ -9,59 +9,9 @@ spec:
   # Custom labels applied to all resources created by this ServerWorkerSet
   labels:
     custom-label: "value"
-  # Server policies - applied when server pods encounter issues
-  serverPolicy:
-    # Restart the entire instance (server + all workers) if server fails
-    - event: PodFailed
-      action: RestartInstance
-    # Replace just the server pod on OOM kill (may recover with fresh memory)
-    - event: OOMKilled
-      action: RestartInstance
-    # Restart instance on eviction to migrate the whole workload
-    - event: PodEvicted
-      action: RestartInstance
-    - event: Unknown
-      action: RestartInstance
-  # Worker policies - can have different rules than servers
-  workerPolicy:
-    # Workers typically just get replaced on failure (other workers keep running)
-    - event: PodFailed
-      action: ReplacePod
-    # OOM killed workers get replaced with fresh pod
-    - event: OOMKilled
-      action: ReplacePod
-    # Evicted workers get replaced (only affects this worker)
-    - event: PodEvicted
-      action: ReplacePod
-    # Unknown state - try replacing first
-    - event: Unknown
-      action: ReplacePod
-  # serverService controls how the single shared server Service is exposed.
-  serverService:
-    port: 8080           # port on the ClusterIP service
-    targetPort: 8080     # container port (defaults to port)
-    stickySession: true  # pin a client IP to one server pod
-    stickySessionTimeoutSeconds: 10800  # 3 h default
-    type: NodePort  # ClusterIP (default) or NodePort
-  autoScaling:
-    enabled: false       # set to true to create an HTTPScaledObject (requires KEDA HTTP add-on)
-    hosts:
-      - test.spaces.kalavai.net       # hostname(s) KEDA HTTP add-on routes traffic for
-    pathPrefixes:
-      - "/"              # path prefixes for scaling (default: ["/"])
-    replicas:
-      min: 0             # 0 enables scale-to-zero
-      max: 2
-    scaledownPeriod: 300 # seconds idle before scaling down
-    scalingMetric:
-      requestRate:
-        granularity: 1s
-        targetValue: 1
-        window: 1m
-      # concurrency:
-      #   targetValue: 10
-  serverPodSpec:
-    containers:
+  server:
+    template:
+      containers:
       - name: server
         image: python:3.12-slim
         # SERVER_ADDRESS and WORKERS_ADDRESSES are injected per-instance automatically.
@@ -87,8 +37,21 @@ spec:
         # resources:
         #   limits:
         #     nvidia.com/gpu: "1"
-  workerPodSpec:
-    containers:
+    policy:
+    # Restart the entire instance (server + all workers) if server fails
+    - event: PodFailed
+      action: RestartInstance
+    # Replace just the server pod on OOM kill (may recover with fresh memory)
+    - event: OOMKilled
+      action: RestartInstance
+    # Restart instance on eviction to migrate the whole workload
+    - event: PodEvicted
+      action: RestartInstance
+    - event: Unknown
+      action: RestartInstance
+  worker:
+    template:
+      containers:
       - name: worker
         image: python:3.12-slim
         # SERVER_ADDRESS points to THIS instance's server (not shared across instances).
@@ -106,6 +69,43 @@ spec:
         # resources:
         #   limits:
         #     nvidia.com/gpu: "1"
+    policy:
+    # Workers typically just get replaced on failure (other workers keep running)
+    - event: PodFailed
+      action: ReplacePod
+    # OOM killed workers get replaced with fresh pod
+    - event: OOMKilled
+      action: ReplacePod
+    # Evicted workers get replaced (only affects this worker)
+    - event: PodEvicted
+      action: ReplacePod
+    # Unknown state - try replacing first
+    - event: Unknown
+      action: ReplacePod
+  # service controls how the single shared server Service is exposed.
+  service:
+    port: 8080           # port on the ClusterIP service
+    targetPort: 8080     # container port (defaults to port)
+    stickySession: true  # pin a client IP to one server pod
+    stickySessionTimeoutSeconds: 10800  # 3 h default
+    type: NodePort  # ClusterIP (default) or NodePort
+  autoScaling:
+    enabled: false       # set to true to create an HTTPScaledObject (requires KEDA HTTP add-on)
+    hosts:
+      - test.spaces.kalavai.net       # hostname(s) KEDA HTTP add-on routes traffic for
+    pathPrefixes:
+      - "/"              # path prefixes for scaling (default: ["/"])
+    replicas:
+      min: 0             # 0 enables scale-to-zero
+      max: 2
+    scaledownPeriod: 300 # seconds idle before scaling down
+    scalingMetric:
+      requestRate:
+        granularity: 1s
+        targetValue: 1
+        window: 1m
+      # concurrency:
+      #   targetValue: 10
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

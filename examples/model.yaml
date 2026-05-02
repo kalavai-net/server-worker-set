@@ -8,27 +8,99 @@ spec:
   workersPerInstance: 1   
   labels:
     custom-label: "value"
-  serverPolicy:
-  - event: PodFailed
-    action: RestartInstance
-  - event: OOMKilled
-    action: RestartInstance
-  - event: PodEvicted
-    action: RestartInstance
-  - event: Unknown
-    action: RestartInstance
-  workerPolicy:
-  - event: PodFailed
-    action: ReplacePod
-  - event: OOMKilled
-    action: ReplacePod
-  - event: OOMKilled
-    action: ReplacePod
-  - event: PodEvicted
-    action: ReplacePod
-  - event: Unknown
-    action: ReplacePod
-  serverService:
+  server:
+    template:
+      runtimeClassName: nvidia
+      nodeSelector:
+        kalavai/region: uspor01
+      containers:
+        - name: server
+          image: ghcr.io/kalavai-net/llamacpp-cuda:b8941-1
+          command: 
+          - bash
+          - -c
+          - |
+            echo "Starting server..."
+            echo "SERVER_ADDRESS: $SERVER_ADDRESS"
+            echo "WORKERS_ADDRESSES: $WORKERS_ADDRESSES"
+            # run model server
+            export WORKERS=$(/workspace/get_workers_address.sh --rpc_port=50052 --rpc_servers="${WORKERS_ADDRESSES}")
+            /workspace/run_api_server.sh \
+              --repo_id=unsloth/gemma-3-4b-it-GGUF \
+              --quant=Q4_K_M \
+              --port=8080 \
+              --rpc_servers=$WORKERS \
+              --extra='--cache-type-k q4_0 --cache-type-v q4_0'
+          env:
+          - name: HF_TOKEN
+            value: ""
+          ports:
+            - containerPort: 8080
+          # helps scaler detect when server is ready
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+              cpu: 4
+              memory: 8Gi
+              ephemeral-storage: 10Gi
+            limits:
+              nvidia.com/gpu: "1"
+              cpu: 4
+              memory: 8Gi
+              ephemeral-storage: 10Gi
+    policy:
+    - event: PodFailed
+      action: RestartInstance
+    - event: OOMKilled
+      action: RestartInstance
+    - event: PodEvicted
+      action: RestartInstance
+    - event: Unknown
+      action: RestartInstance
+  worker:
+    template:
+      runtimeClassName: nvidia
+      nodeSelector:
+        kalavai/region: uspor01
+      containers:
+        - name: worker
+          image: ghcr.io/kalavai-net/llamacpp-cuda:b8941-1
+          # SERVER_ADDRESS points to THIS instance's server (not shared across instances).
+          command:
+            - bash
+            - -c
+            - |
+              echo "Starting worker..."
+              /workspace/run_rpc_worker.sh --rpc_port=50052
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+              cpu: 4
+              memory: 8Gi
+              ephemeral-storage: 10Gi
+            limits:
+              nvidia.com/gpu: "1"
+              cpu: 4
+              memory: 8Gi
+              ephemeral-storage: 10Gi
+    policy:
+    - event: PodFailed
+      action: ReplacePod
+    - event: OOMKilled
+      action: ReplacePod
+    - event: OOMKilled
+      action: ReplacePod
+    - event: PodEvicted
+      action: ReplacePod
+    - event: Unknown
+      action: ReplacePod
+  service:
     port: 8080           
     targetPort: 8080     
     stickySession: true  
@@ -51,76 +123,6 @@ spec:
         window: 1m
       # concurrency:
       #   targetValue: 10
-  serverPodSpec:
-    runtimeClassName: nvidia
-    nodeSelector:
-      kalavai/region: uspor01
-    containers:
-      - name: server
-        image: ghcr.io/kalavai-net/llamacpp-cuda:b8941-1
-        command: 
-        - bash
-        - -c
-        - |
-          echo "Starting server..."
-          echo "SERVER_ADDRESS: $SERVER_ADDRESS"
-          echo "WORKERS_ADDRESSES: $WORKERS_ADDRESSES"
-          # run model server
-          export WORKERS=$(/workspace/get_workers_address.sh --rpc_port=50052 --rpc_servers="${WORKERS_ADDRESSES}")
-          /workspace/run_api_server.sh \
-            --repo_id=unsloth/gemma-3-4b-it-GGUF \
-            --quant=Q4_K_M \
-            --port=8080 \
-            --rpc_servers=$WORKERS \
-            --extra='--cache-type-k q4_0 --cache-type-v q4_0'
-        env:
-        - name: HF_TOKEN
-          value: ""
-        ports:
-          - containerPort: 8080
-        # helps scaler detect when server is ready
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        resources:
-          requests:
-            nvidia.com/gpu: "1"
-            cpu: 4
-            memory: 8Gi
-            ephemeral-storage: 10Gi
-          limits:
-            nvidia.com/gpu: "1"
-            cpu: 4
-            memory: 8Gi
-            ephemeral-storage: 10Gi
-  workerPodSpec:
-    runtimeClassName: nvidia
-    nodeSelector:
-      kalavai/region: uspor01
-    containers:
-      - name: worker
-        image: ghcr.io/kalavai-net/llamacpp-cuda:b8941-1
-        # SERVER_ADDRESS points to THIS instance's server (not shared across instances).
-        command:
-          - bash
-          - -c
-          - |
-            echo "Starting worker..."
-            /workspace/run_rpc_worker.sh --rpc_port=50052
-        resources:
-          requests:
-            nvidia.com/gpu: "1"
-            cpu: 4
-            memory: 8Gi
-            ephemeral-storage: 10Gi
-          limits:
-            nvidia.com/gpu: "1"
-            cpu: 4
-            memory: 8Gi
-            ephemeral-storage: 10Gi
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

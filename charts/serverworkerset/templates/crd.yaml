@@ -22,8 +22,8 @@ spec:
             spec:
               type: object
               required:
-                - serverPodSpec
-                - workerPodSpec
+                - server
+                - worker
               properties:
                 replicas:
                   type: integer
@@ -34,7 +34,7 @@ spec:
                   minimum: 1
                   default: 1
                   description: Number of worker pods per server instance (fixed, not scaled by KEDA).
-                serverService:
+                service:
                   type: object
                   description: >-
                     Controls how the global server Service is exposed. A single Service selects
@@ -68,56 +68,68 @@ spec:
                         Kubernetes Service type for the global service.
                         "ClusterIP" (default) is only reachable within the cluster.
                         "NodePort" exposes the service on each node's IP at a static port.
-                serverPodSpec:
+                server:
                   type: object
-                  description: Pod spec for the single server pod.
-                  x-kubernetes-preserve-unknown-fields: true
-                workerPodSpec:
+                  required:
+                    - template
+                  description: Server configuration including pod template and policies.
+                  properties:
+                    template:
+                      type: object
+                      description: Pod spec for the single server pod.
+                      x-kubernetes-preserve-unknown-fields: true
+                    policy:
+                      type: array
+                      description: >
+                        List of event-action policies for server pods. When a server pod
+                        enters a matching state, the specified action is taken.
+                      items:
+                        type: object
+                        required:
+                          - event
+                          - action
+                        properties:
+                          event:
+                            type: string
+                            enum: ["PodFailed", "PodEvicted", "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerError", "OOMKilled", "Unknown"]
+                            description: Pod status event to watch for.
+                          action:
+                            type: string
+                            enum: ["RestartInstance", "ReplacePod"]
+                            description: >
+                              RestartInstance deletes and recreates all pods (server + workers) in the instance.
+                              ReplacePod deletes only the offending pod (statefulset will recreate it).
+                worker:
                   type: object
-                  description: Pod spec for each worker pod.
-                  x-kubernetes-preserve-unknown-fields: true
-                serverPolicy:
-                  type: array
-                  description: >
-                    List of event-action policies for server pods. When a server pod
-                    enters a matching state, the specified action is taken.
-                  items:
-                    type: object
-                    required:
-                      - event
-                      - action
-                    properties:
-                      event:
-                        type: string
-                        enum: ["PodFailed", "PodEvicted", "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerError", "OOMKilled", "Unknown"]
-                        description: Pod status event to watch for.
-                      action:
-                        type: string
-                        enum: ["RestartInstance", "ReplacePod"]
-                        description: >
-                          RestartInstance deletes and recreates all pods (server + workers) in the instance.
-                          ReplacePod deletes only the offending pod (statefulset will recreate it).
-                workerPolicy:
-                  type: array
-                  description: >
-                    List of event-action policies for worker pods. When a worker pod
-                    enters a matching state, the specified action is taken.
-                  items:
-                    type: object
-                    required:
-                      - event
-                      - action
-                    properties:
-                      event:
-                        type: string
-                        enum: ["PodFailed", "PodEvicted", "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerError", "OOMKilled", "Unknown"]
-                        description: Pod status event to watch for.
-                      action:
-                        type: string
-                        enum: ["RestartInstance", "ReplacePod"]
-                        description: >
-                          RestartInstance deletes and recreates all pods (server + workers) in the instance.
-                          ReplacePod deletes only the offending pod (statefulset will recreate it).
+                  required:
+                    - template
+                  description: Worker configuration including pod template and policies.
+                  properties:
+                    template:
+                      type: object
+                      description: Pod spec for each worker pod.
+                      x-kubernetes-preserve-unknown-fields: true
+                    policy:
+                      type: array
+                      description: >
+                        List of event-action policies for worker pods. When a worker pod
+                        enters a matching state, the specified action is taken.
+                      items:
+                        type: object
+                        required:
+                          - event
+                          - action
+                        properties:
+                          event:
+                            type: string
+                            enum: ["PodFailed", "PodEvicted", "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerError", "OOMKilled", "Unknown"]
+                            description: Pod status event to watch for.
+                          action:
+                            type: string
+                            enum: ["RestartInstance", "ReplacePod"]
+                            description: >
+                              RestartInstance deletes and recreates all pods (server + workers) in the instance.
+                              ReplacePod deletes only the offending pod (statefulset will recreate it).
                 labels:
                   type: object
                   description: >
