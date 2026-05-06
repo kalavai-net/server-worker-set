@@ -10,7 +10,7 @@ spec:
   labels:
     custom-label: "value"
   server:
-    template:
+    spec:
       containers:
       - name: server
         image: python:3.12-slim
@@ -50,7 +50,7 @@ spec:
     - event: Unknown
       action: RestartInstance
   worker:
-    template:
+    spec:
       containers:
       - name: worker
         image: python:3.12-slim

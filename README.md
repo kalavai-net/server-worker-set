@@ -72,7 +72,7 @@ kubectl apply -f crd.yaml
 
 # Run operator locally (dev)
 pip install -r requirements.txt
-kopf run server_worker_set/set_operator.py --namespace default
+kopf run server_worker_set/set_operator.py 
 
 # Apply an example resource
 kubectl apply -f example_cr.yaml
@@ -237,3 +237,4 @@ See `examples/serverworkerset.yaml` for a complete configuration.
 ## TODO
 
 - Support for gang scheduling
+- Better logging (surface errors when creating pods / statefulsets)

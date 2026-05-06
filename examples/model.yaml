@@ -9,7 +9,7 @@ spec:
   labels:
     custom-label: "value"
   server:
-    template:
+    spec:
       runtimeClassName: nvidia
       nodeSelector:
         kalavai/region: uspor01
@@ -64,7 +64,7 @@ spec:
     - event: Unknown
       action: RestartInstance
   worker:
-    template:
+    spec:
       runtimeClassName: nvidia
       nodeSelector:
         kalavai/region: uspor01

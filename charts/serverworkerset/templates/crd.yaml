@@ -40,6 +40,10 @@ spec:
                     Controls how the global server Service is exposed. A single Service selects
                     all server pods and round-robins (or sticky-sessions) requests across them.
                   properties:
+                    name:
+                      type: string
+                      description: Name of the load balancing global service
+                      default: null
                     port:
                       type: integer
                       minimum: 1
@@ -71,10 +75,10 @@ spec:
                 server:
                   type: object
                   required:
-                    - template
-                  description: Server configuration including pod template and policies.
+                    - spec
+                  description: Server configuration including pod spec and policies.
                   properties:
-                    template:
+                    spec:
                       type: object
                       description: Pod spec for the single server pod.
                       x-kubernetes-preserve-unknown-fields: true
@@ -102,10 +106,10 @@ spec:
                 worker:
                   type: object
                   required:
-                    - template
-                  description: Worker configuration including pod template and policies.
+                    - spec
+                  description: Worker configuration including pod spec and policies.
                   properties:
-                    template:
+                    spec:
                       type: object
                       description: Pod spec for each worker pod.
                       x-kubernetes-preserve-unknown-fields: true

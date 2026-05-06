@@ -361,11 +361,12 @@ def _delete_instance(api: _API, cr_name: str, idx: int, namespace: str):
 def reconcile(spec, name, namespace, body, patch, **kwargs):
     desired_instances = spec.get("replicas", 1)
     workers_per_instance = spec.get("workersPerInstance", 1)
-    server_pod_spec = dict(spec["server"]["template"])
-    worker_pod_spec = dict(spec["worker"]["template"])
+    server_pod_spec = dict(spec["server"]["spec"])
+    worker_pod_spec = dict(spec["worker"]["spec"])
     custom_labels = dict(spec.get("labels", {}))
 
     svc_spec = spec.get("service", {})
+    svc_name = svc_spec.get("name", _global_server_svc(name))
     svc_port = svc_spec.get("port", 8080)
     svc_target_port = svc_spec.get("targetPort", svc_port)
     svc_sticky = svc_spec.get("stickySession", False)
@@ -381,7 +382,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
     }
     global_selector.update(custom_labels)
     global_svc = _build_global_service(
-        _global_server_svc(name), namespace, global_selector,
+        svc_name, namespace, global_selector,
         svc_port, svc_target_port, svc_sticky, svc_sticky_timeout,
         service_type=svc_type,
     )
