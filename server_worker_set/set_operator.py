@@ -117,6 +117,7 @@ def _build_headless_service(
         "spec": {
             "clusterIP": "None",
             "selector": selector,
+            "publishNotReadyAddresses": True,  # Add this line
             "ports": [{"name": "placeholder", "port": 1, "targetPort": 1}],
         },
     }
