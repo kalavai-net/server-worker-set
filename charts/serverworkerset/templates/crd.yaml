@@ -24,6 +24,7 @@ spec:
               required:
                 - server
                 - worker
+                - workersPerInstance
               properties:
                 replicas:
                   type: integer
@@ -31,7 +32,7 @@ spec:
                   description: Number of (server + N-worker) instances. KEDA scales this via /scale subresource.
                 workersPerInstance:
                   type: integer
-                  minimum: 1
+                  minimum: 0
                   default: 1
                   description: Number of worker pods per server instance (fixed, not scaled by KEDA).
                 service:

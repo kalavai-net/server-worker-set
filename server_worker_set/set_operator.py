@@ -326,30 +326,43 @@ def _reconcile_instance(
 
     objs = [
         _build_headless_service(_inst_server_svc(cr_name, idx), namespace, server_sel),
-        _build_headless_service(_inst_worker_svc(cr_name, idx), namespace, worker_sel),
         _build_statefulset(
             _inst_server_sts(cr_name, idx), namespace, 1, server_sel,
             _inst_server_svc(cr_name, idx),
             srv_spec,
         ),
-        _build_statefulset(
-            _inst_worker_sts(cr_name, idx), namespace, workers_per_instance, worker_sel,
-            _inst_worker_svc(cr_name, idx), wkr_spec,
-        ),
     ]
+    
+    # Only create worker resources if workers_per_instance > 0
+    if workers_per_instance > 0:
+        objs.extend([
+            _build_headless_service(_inst_worker_svc(cr_name, idx), namespace, worker_sel),
+            _build_statefulset(
+                _inst_worker_sts(cr_name, idx), namespace, workers_per_instance, worker_sel,
+                _inst_worker_svc(cr_name, idx), wkr_spec,
+            ),
+        ])
+    
     for obj in objs:
         _apply_object(api, obj, body)
 
 
-def _delete_instance(api: _API, cr_name: str, idx: int, namespace: str):
+def _delete_instance(api: _API, cr_name: str, idx: int, namespace: str, workers_per_instance: int = 1):
     """Delete all resources for instance `idx`."""
     for kind, obj_name in [
         ("StatefulSet", _inst_server_sts(cr_name, idx)),
-        ("StatefulSet", _inst_worker_sts(cr_name, idx)),
         ("Service", _inst_server_svc(cr_name, idx)),
-        ("Service", _inst_worker_svc(cr_name, idx)),
     ]:
         _delete_if_exists(api, kind, obj_name, namespace)
+    
+    # Only delete worker resources if workers_per_instance > 0
+    if workers_per_instance > 0:
+        for kind, obj_name in [
+            ("StatefulSet", _inst_worker_sts(cr_name, idx)),
+            ("Service", _inst_worker_svc(cr_name, idx)),
+        ]:
+            _delete_if_exists(api, kind, obj_name, namespace)
+    
     logger.info("Deleted instance %d of %s/%s", idx, namespace, cr_name)
 
 
@@ -419,7 +432,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
 
     desired_set = set(range(desired_instances))
     for orphan_idx in existing_indices - desired_set:
-        _delete_instance(api, name, orphan_idx, namespace)
+        _delete_instance(api, name, orphan_idx, namespace, workers_per_instance)
 
     # Build label selector for KEDA (covers all pods in this CR)
     keda_selector = f"{OWNER_LABEL}={name}"
@@ -498,23 +511,30 @@ def sync_status(name, namespace, spec, patch, **kwargs):
             else:
                 raise
         
-        try:
-            wkr = api.apps.read_namespaced_stateful_set(worker_sts_name, namespace)
-            worker_exists = True
-        except kubernetes.client.exceptions.ApiException as e:
-            if e.status == 404:
-                # Worker StatefulSet doesn't exist - will be recreated by reconcile
-                pass
-            else:
-                raise
+        # Only check worker StatefulSet if workers_per_instance > 0
+        if workers_per_instance > 0:
+            try:
+                wkr = api.apps.read_namespaced_stateful_set(worker_sts_name, namespace)
+                worker_exists = True
+            except kubernetes.client.exceptions.ApiException as e:
+                if e.status == 404:
+                    # Worker StatefulSet doesn't exist - will be recreated by reconcile
+                    pass
+                else:
+                    raise
         
-        # Only count as existing if both StatefulSets exist
-        if server_exists and worker_exists:
+        # Count as existing if server exists (and worker exists if workers_per_instance > 0)
+        if server_exists and (workers_per_instance == 0 or worker_exists):
             existing_instances += 1
             server_ready = (srv.status.ready_replicas or 0) >= 1
-            workers_ready = (wkr.status.ready_replicas or 0) >= workers_per_instance
-            if server_ready and workers_ready:
-                ready_instances += 1
+            if workers_per_instance > 0:
+                workers_ready = (wkr.status.ready_replicas or 0) >= workers_per_instance
+                if server_ready and workers_ready:
+                    ready_instances += 1
+            else:
+                # No workers, instance is ready if server is ready
+                if server_ready:
+                    ready_instances += 1
 
     # Update status to reflect actual existing instances, not desired instances
     # This allows the reconcile loop to recreate deleted StatefulSets
