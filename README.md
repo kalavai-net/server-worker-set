@@ -90,7 +90,7 @@ helm install my-release ./chart
 helm repo add server-worker-set https://kalavai-net.github.io/server-worker-set/
 helm repo update
 
-helm install my-release server-worker-set
+helm install my-release server-worker-set/serverworkerset-operator -n <namespace>
 ```
 
 ## Repo requirements
