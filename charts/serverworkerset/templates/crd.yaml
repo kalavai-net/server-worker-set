@@ -135,6 +135,43 @@ spec:
                             description: >
                               RestartInstance deletes and recreates all pods (server + workers) in the instance.
                               ReplacePod deletes only the offending pod (statefulset will recreate it).
+                head:
+                  type: object
+                  required:
+                    - spec
+                  description: >
+                    Head configuration including pod spec. Optional - if not defined, no head pod is created.
+                    Always creates exactly 1 pod instance when defined. Receives the global load balancer
+                    service address as environment variables.
+                  properties:
+                    spec:
+                      type: object
+                      description: Pod spec for the head pod (single instance).
+                      x-kubernetes-preserve-unknown-fields: true
+                initHook:
+                  type: object
+                  required:
+                    - spec
+                  description: >
+                    Init hook configuration including pod spec. Optional - if not defined, no init hook is executed.
+                    Runs as a one-time Job when the ServerWorkerSet is created, before the main resources.
+                  properties:
+                    spec:
+                      type: object
+                      description: Pod spec for the init hook Job.
+                      x-kubernetes-preserve-unknown-fields: true
+                finalizerHook:
+                  type: object
+                  required:
+                    - spec
+                  description: >
+                    Finalizer hook configuration including pod spec. Optional - if not defined, no finalizer hook is executed.
+                    Runs as a one-time Job when the ServerWorkerSet is deleted, after the main resources are deleted.
+                  properties:
+                    spec:
+                      type: object
+                      description: Pod spec for the finalizer hook Job.
+                      x-kubernetes-preserve-unknown-fields: true
                 labels:
                   type: object
                   description: >
@@ -206,6 +243,9 @@ spec:
                 readyInstances:
                   type: integer
                   description: Number of fully-ready instances (server + all workers ready).
+                headReady:
+                  type: boolean
+                  description: Whether the head pod is ready (only present if head spec is defined).
                 instances:
                   type: array
                   description: Per-instance DNS addresses.

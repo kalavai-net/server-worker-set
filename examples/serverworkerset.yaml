@@ -4,11 +4,68 @@ metadata:
   name: my-sws
   namespace: default
 spec:
-  replicas: 2              # number of (server + N-worker) instances — KEDA scales this
-  workersPerInstance: 2   # each instance has 1 server + 4 workers
+  replicas: 1              # number of (server + N-worker) instances — KEDA scales this
+  workersPerInstance: 2   # each instance has 1 server + 2 workers
   # Custom labels applied to all resources created by this ServerWorkerSet
   labels:
     custom-label: "value"
+  # Init hook - runs once when ServerWorkerSet is created (before main resources)
+  initHook:
+    spec:
+      containers:
+      - name: init-job
+        image: python:3.12-slim
+        command:
+          - bash
+          - -c
+          - |
+            echo "Running initialization tasks..."
+            # Your arbitrary init code here (e.g., create database schema, download models)
+            echo "GLOBAL_SERVICE_ADDRESS: $GLOBAL_SERVICE_ADDRESS"
+            echo "GLOBAL_SERVICE_PORT: $GLOBAL_SERVICE_PORT"
+            sleep 10
+            echo "Initialization complete"
+      restartPolicy: OnFailure
+  # Finalizer hook - runs once when ServerWorkerSet is deleted (after main resources)
+  finalizerHook:
+    spec:
+      containers:
+      - name: cleanup-job
+        image: python:3.12-slim
+        command:
+          - bash
+          - -c
+          - |
+            echo "Running cleanup tasks..."
+            # Your arbitrary cleanup code here (e.g., delete temporary data, notify external systems)
+            echo "GLOBAL_SERVICE_ADDRESS: $GLOBAL_SERVICE_ADDRESS"
+            echo "GLOBAL_SERVICE_PORT: $GLOBAL_SERVICE_PORT"
+            sleep 10
+            echo "Cleanup complete"
+      restartPolicy: OnFailure
+  head:
+    spec:
+      containers:
+      - name: head
+        image: python:3.12-slim
+        # GLOBAL_SERVICE_ADDRESS is injected with the SWS service address
+        # e.g. GLOBAL_SERVICE_ADDRESS=my-sws-service.default.svc.cluster.local:8080
+        command:
+          - bash
+          - -c
+          - |
+            apt update && apt install -y netcat-openbsd
+            echo "GLOBAL_SERVICE_ADDRESS: $GLOBAL_SERVICE_ADDRESS"
+            echo "GLOBAL_SERVICE_PORT: $GLOBAL_SERVICE_PORT"
+            ADDRESS="${GLOBAL_SERVICE_ADDRESS}:${GLOBAL_SERVICE_PORT}"
+            echo "ADDRESS: $ADDRESS"
+            echo "Waiting for service to be ready..."
+            while ! nc -z $(echo $ADDRESS | cut -d: -f1) $(echo $ADDRESS | cut -d: -f2); do
+              echo "Service not ready, retrying in 5 seconds..."
+              sleep 5
+            done
+            echo "Service is ready!"
+            tail -f /dev/null
   server:
     spec:
       containers:
@@ -21,6 +78,7 @@ spec:
         - -c
         - |
           echo "Starting server..."
+          sleep 60
           apt update && apt install -y iputils-ping
           echo "SERVER_ADDRESS: $SERVER_ADDRESS"
           echo "WORKERS_ADDRESSES: $WORKERS_ADDRESSES"

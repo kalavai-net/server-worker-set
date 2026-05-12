@@ -44,6 +44,22 @@ def _global_server_svc(cr_name: str) -> str:
     return f"{cr_name}-service"
 
 
+def _head_sts(cr_name: str) -> str:
+    return f"{cr_name}-head"
+
+
+def _head_svc(cr_name: str) -> str:
+    return f"{cr_name}-head"
+
+
+def _init_hook_job_name(cr_name: str) -> str:
+    return f"{cr_name}-init-hook"
+
+
+def _finalizer_hook_job_name(cr_name: str) -> str:
+    return f"{cr_name}-finalizer-hook"
+
+
 def _inst_server_address(cr_name: str, idx: int, namespace: str) -> str:
     """Stable DNS for the server pod of instance idx."""
     sts = _inst_server_sts(cr_name, idx)
@@ -76,6 +92,17 @@ def _inst_worker_labels(cr_name: str, idx: int, custom_labels: dict = None) -> d
     return labels
 
 
+def _head_labels(cr_name: str, custom_labels: dict = None) -> dict:
+    labels = {
+        OWNER_LABEL: cr_name,
+        "serverworkerset-role": "head",
+        "serverworkerset-id": f"{cr_name}-head",
+    }
+    if custom_labels:
+        labels.update(custom_labels)
+    return labels
+
+
 # Label key shared by ALL server pods of a CR (used by the global service selector)
 GLOBAL_SERVER_ROLE_LABEL = "serverworkerset-role"
 
@@ -98,6 +125,25 @@ def _inject_dns_env(
     for container in pod_spec.get("containers", []):
         existing = {e["name"] for e in container.get("env", [])}
         for ev in dns_env:
+            if ev["name"] not in existing:
+                container.setdefault("env", []).append(ev)
+    return pod_spec
+
+
+def _inject_global_service_env(
+    pod_spec: dict,
+    global_service_address: str,
+    port: int,
+) -> dict:
+    """Inject GLOBAL_SERVICE_ADDRESS into every container of the head pod."""
+    pod_spec = copy.deepcopy(pod_spec)
+    service_env = [
+        {"name": "GLOBAL_SERVICE_ADDRESS", "value": f"{global_service_address}"},
+        {"name": "GLOBAL_SERVICE_PORT", "value": f"{port}"},
+    ]
+    for container in pod_spec.get("containers", []):
+        existing = {e["name"] for e in container.get("env", [])}
+        for ev in service_env:
             if ev["name"] not in existing:
                 container.setdefault("env", []).append(ev)
     return pod_spec
@@ -185,6 +231,35 @@ def _build_statefulset(
     }
 
 
+def _build_job(
+    job_name: str,
+    namespace: str,
+    selector: dict,
+    pod_spec: dict,
+) -> dict:
+    # Ensure restartPolicy is set (required for Jobs)
+    pod_spec = copy.deepcopy(pod_spec)
+    if "restartPolicy" not in pod_spec:
+        pod_spec["restartPolicy"] = "OnFailure"
+    
+    return {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+            "name": job_name,
+            "namespace": namespace,
+            "labels": selector,
+        },
+        "spec": {
+            "template": {
+                "metadata": {"labels": selector},
+                "spec": pod_spec,
+            },
+            "backoffLimit": 4,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Kubernetes API helpers
 # ---------------------------------------------------------------------------
@@ -195,6 +270,7 @@ class _API:
         self.apps = kubernetes.client.AppsV1Api()
         self.custom = kubernetes.client.CustomObjectsApi()
         self.networking = kubernetes.client.NetworkingV1Api()
+        self.batch = kubernetes.client.BatchV1Api()
 
 
 def _apply_object(api: _API, obj: dict, body):
@@ -216,6 +292,10 @@ def _apply_object(api: _API, obj: dict, body):
             group, version = "http.keda.sh", "v1alpha1"
             api.custom.get_namespaced_custom_object(group, version, ns, "httpscaledobjects", obj_name)
             api.custom.replace_namespaced_custom_object(group, version, ns, "httpscaledobjects", obj_name, obj)
+        elif kind == "Job":
+            existing = api.batch.read_namespaced_job(obj_name, ns)
+            obj["metadata"]["resourceVersion"] = existing.metadata.resource_version
+            api.batch.replace_namespaced_job(obj_name, ns, obj)
     except kubernetes.client.exceptions.ApiException as e:
         if e.status == 404:
             if kind == "Service":
@@ -225,6 +305,8 @@ def _apply_object(api: _API, obj: dict, body):
             elif kind == "HTTPScaledObject":
                 group, version = "http.keda.sh", "v1alpha1"
                 api.custom.create_namespaced_custom_object(group, version, ns, "httpscaledobjects", obj)
+            elif kind == "Job":
+                api.batch.create_namespaced_job(ns, obj)
         else:
             raise
 
@@ -239,6 +321,8 @@ def _delete_if_exists(api: _API, kind: str, obj_name: str, namespace: str):
             api.custom.delete_namespaced_custom_object(
                 "http.keda.sh", "v1alpha1", namespace, "httpscaledobjects", obj_name
             )
+        elif kind == "Job":
+            api.batch.delete_namespaced_job(obj_name, namespace)
     except kubernetes.client.exceptions.ApiException as e:
         if e.status != 404:
             raise
@@ -366,6 +450,43 @@ def _delete_instance(api: _API, cr_name: str, idx: int, namespace: str, workers_
     logger.info("Deleted instance %d of %s/%s", idx, namespace, cr_name)
 
 
+def _reconcile_head(
+    api: _API,
+    cr_name: str,
+    namespace: str,
+    head_pod_spec: dict,
+    global_service_address: str,
+    port: int,
+    custom_labels: dict,
+    body,
+):
+    """Ensure the head StatefulSet and Service exist and are up to date."""
+    head_spec = _inject_global_service_env(head_pod_spec, global_service_address, port)
+    head_sel = _head_labels(cr_name, custom_labels)
+
+    objs = [
+        _build_headless_service(_head_svc(cr_name), namespace, head_sel),
+        _build_statefulset(
+            _head_sts(cr_name), namespace, 1, head_sel,
+            _head_svc(cr_name), head_spec,
+        ),
+    ]
+    
+    for obj in objs:
+        _apply_object(api, obj, body)
+
+
+def _delete_head(api: _API, cr_name: str, namespace: str):
+    """Delete all head resources."""
+    for kind, obj_name in [
+        ("StatefulSet", _head_sts(cr_name)),
+        ("Service", _head_svc(cr_name)),
+    ]:
+        _delete_if_exists(api, kind, obj_name, namespace)
+    
+    logger.info("Deleted head of %s/%s", namespace, cr_name)
+
+
 # ---------------------------------------------------------------------------
 # KOPF handlers
 # ---------------------------------------------------------------------------
@@ -373,11 +494,18 @@ def _delete_instance(api: _API, cr_name: str, idx: int, namespace: str, workers_
 @kopf.on.create(GROUP, VERSION, PLURAL)
 @kopf.on.update(GROUP, VERSION, PLURAL)
 def reconcile(spec, name, namespace, body, patch, **kwargs):
+    # Add finalizer if finalizerHook is defined
+    finalizer_hook_spec = spec.get("finalizerHook")
+    if finalizer_hook_spec:
+        finalizers = body.metadata.get("finalizers", [])
+        if "kalavai.net/finalizer" not in finalizers:
+            patch.metadata["finalizers"] = finalizers + ["kalavai.net/finalizer"]
     desired_instances = spec.get("replicas", 1)
     workers_per_instance = spec.get("workersPerInstance", 1)
     server_pod_spec = dict(spec["server"]["spec"])
     worker_pod_spec = dict(spec["worker"]["spec"])
     custom_labels = dict(spec.get("labels", {}))
+    head_spec = spec.get("head")
 
     svc_spec = spec.get("service", {})
     svc_name = svc_spec.get("name", _global_server_svc(name))
@@ -401,6 +529,48 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
         service_type=svc_type,
     )
     _apply_object(api, global_svc, body)
+
+    # Execute init hook if defined (only runs once on creation)
+    init_hook_spec = spec.get("initHook")
+    if init_hook_spec:
+        init_hook_job_name = _init_hook_job_name(name)
+        # Check if init hook has already run (via annotation)
+        annotations = body.get("metadata", {}).get("annotations", {})
+        if annotations.get("serverworkerset.kalavai.net/init-hook-run"):
+            logger.info("Init hook already completed for %s/%s, skipping", namespace, name)
+        else:
+            # Job doesn't exist or hasn't been marked as completed, create it
+            init_hook_pod_spec = dict(init_hook_spec["spec"])
+            # Inject global service address into init hook
+            global_service_address = f"{svc_name}.{namespace}.svc.cluster.local"
+            init_hook_pod_spec = _inject_global_service_env(init_hook_pod_spec, global_service_address, svc_port)
+            init_hook_labels = {
+                OWNER_LABEL: name,
+                "serverworkerset-role": "init-hook",
+                "serverworkerset-id": f"{name}-init-hook",
+            }
+            init_hook_labels.update(custom_labels)
+            init_hook_job = _build_job(
+                init_hook_job_name, namespace, init_hook_labels, init_hook_pod_spec
+            )
+            _apply_object(api, init_hook_job, body)
+            # Add annotation immediately to mark as completed
+            annotations["serverworkerset.kalavai.net/init-hook-run"] = "true"
+            patch.metadata["annotations"] = annotations
+            logger.info("Executed init hook for %s/%s", namespace, name)
+
+    # Reconcile head if defined
+    if head_spec:
+        global_service_address = f"{svc_name}.{namespace}.svc.cluster.local"
+        head_pod_spec = dict(head_spec["spec"])
+        _reconcile_head(
+            api, name, namespace, head_pod_spec, global_service_address, svc_port,
+            custom_labels, body,
+        )
+        logger.info("Reconciled head for %s/%s", namespace, name)
+    else:
+        # Delete head if it was previously defined but now removed
+        _delete_head(api, name, namespace)
 
     # Check current status to detect missing instances (e.g., after restart policy)
     status = body.get("status", {})
@@ -488,10 +658,12 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
 def sync_status(name, namespace, spec, patch, **kwargs):
     desired_instances = spec.get("replicas", 1)
     workers_per_instance = spec.get("workersPerInstance", 1)
+    head_spec = spec.get("head")
     api = _API()
 
     ready_instances = 0
     existing_instances = 0
+    head_ready = False
     
     # Check each desired instance to see if StatefulSets exist and are ready
     for idx in range(desired_instances):
@@ -536,10 +708,24 @@ def sync_status(name, namespace, spec, patch, **kwargs):
                 if server_ready:
                     ready_instances += 1
 
+    # Check head readiness if head spec is defined
+    if head_spec:
+        head_sts_name = _head_sts(name)
+        try:
+            head_sts = api.apps.read_namespaced_stateful_set(head_sts_name, namespace)
+            head_ready = (head_sts.status.ready_replicas or 0) >= 1
+        except kubernetes.client.exceptions.ApiException as e:
+            if e.status == 404:
+                # Head StatefulSet doesn't exist - will be recreated by reconcile
+                head_ready = False
+            else:
+                raise
+
     # Update status to reflect actual existing instances, not desired instances
     # This allows the reconcile loop to recreate deleted StatefulSets
     patch.status["replicas"] = existing_instances
     patch.status["readyInstances"] = ready_instances
+    patch.status["headReady"] = head_ready
     
     logger.info(
         "Status sync for %s/%s: %d existing, %d ready instances (desired: %d)",
@@ -575,7 +761,88 @@ def sync_status(name, namespace, spec, patch, **kwargs):
 # ---------------------------------------------------------------------------
 
 @kopf.on.delete(GROUP, VERSION, PLURAL)
-def on_delete(name, namespace, **kwargs):
+def on_delete(spec, name, namespace, body, patch, **kwargs):
+    finalizer_hook_spec = spec.get("finalizerHook")
+    
+    # If finalizer hook is defined, execute it before deletion
+    if finalizer_hook_spec:
+        job_name = _finalizer_hook_job_name(name)
+        api = _API()
+        
+        # Check if Job exists and its status
+        try:
+            job = api.batch.read_namespaced_job(job_name, namespace)
+            if job.status.succeeded:
+                logger.info("Finalizer hook Job completed successfully for %s/%s", namespace, name)
+                # Clean up the Job with foreground propagation to ensure pods are deleted
+                try:
+                    api.batch.delete_namespaced_job(
+                        job_name, namespace,
+                        body=kubernetes.client.V1DeleteOptions(propagation_policy="Foreground")
+                    )
+                    logger.info("Deleted finalizer hook Job for %s/%s", namespace, name)
+                except kubernetes.client.exceptions.ApiException as e:
+                    if e.status != 404:
+                        logger.warning("Failed to delete finalizer hook Job for %s/%s: %s", namespace, name, e)
+                # Remove finalizer to allow deletion to proceed
+                finalizers = body.metadata.get("finalizers", [])
+                patch.metadata["finalizers"] = [f for f in finalizers if f != "kalavai.net/finalizer"]
+                return
+            elif job.status.failed:
+                logger.warning("Finalizer hook Job failed for %s/%s, proceeding with deletion", namespace, name)
+                # Clean up the failed Job with foreground propagation to ensure pods are deleted
+                try:
+                    api.batch.delete_namespaced_job(
+                        job_name, namespace,
+                        body=kubernetes.client.V1DeleteOptions(propagation_policy="Foreground")
+                    )
+                except kubernetes.client.exceptions.ApiException as e:
+                    if e.status != 404:
+                        logger.warning("Failed to delete finalizer hook Job for %s/%s: %s", namespace, name, e)
+                # Remove finalizer to allow deletion to proceed
+                finalizers = body.metadata.get("finalizers", [])
+                patch.metadata["finalizers"] = [f for f in finalizers if f != "kalavai.net/finalizer"]
+                return
+            else:
+                # Job still running, raise exception to trigger retry
+                logger.info("Finalizer hook Job still running for %s/%s, will retry", namespace, name)
+                raise kopf.TemporaryError("Finalizer hook Job still running", delay=5)
+        except kubernetes.client.exceptions.ApiException as e:
+            if e.status == 404:
+                # Job doesn't exist, create it
+                logger.info("Creating finalizer hook Job for %s/%s", namespace, name)
+                custom_labels = dict(spec.get("labels", {}))
+                finalizer_hook_pod_spec = dict(finalizer_hook_spec["spec"])
+                # Inject global service address into finalizer hook
+                svc_spec = spec.get("service", {})
+                svc_name = svc_spec.get("name", _global_server_svc(name))
+                svc_port = svc_spec.get("port", 8080)
+                global_service_address = f"{svc_name}.{namespace}.svc.cluster.local"
+                finalizer_hook_pod_spec = _inject_global_service_env(finalizer_hook_pod_spec, global_service_address, svc_port)
+                finalizer_hook_labels = {
+                    OWNER_LABEL: name,
+                    "serverworkerset-role": "finalizer-hook",
+                    "serverworkerset-id": f"{name}-finalizer-hook",
+                }
+                finalizer_hook_labels.update(custom_labels)
+                
+                finalizer_hook_job = _build_job(
+                    job_name, namespace, finalizer_hook_labels, finalizer_hook_pod_spec
+                )
+                kopf.adopt(finalizer_hook_job, owner=body)
+                
+                try:
+                    api.batch.create_namespaced_job(namespace, finalizer_hook_job)
+                    logger.info("Created finalizer hook Job for %s/%s", namespace, name)
+                except kubernetes.client.exceptions.ApiException as e:
+                    if e.status != 409:
+                        raise
+                
+                # Raise exception to trigger retry (finalizer was already added in reconcile)
+                raise kopf.TemporaryError("Finalizer hook Job created, will check status", delay=5)
+            else:
+                raise
+    
     logger.info(
         "ServerWorkerSet %s/%s deleted — all child resources will GC via ownerReferences",
         namespace, name,

@@ -20,6 +20,10 @@ rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets", "deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Permissions for batch API group resources (Jobs for init/finalizer hooks)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Permissions for KEDA HTTPScaledObjects
   - apiGroups: ["http.keda.sh"]
     resources: ["httpscaledobjects"]
