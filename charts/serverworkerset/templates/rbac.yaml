@@ -15,7 +15,7 @@ rules:
   # Permissions for Kopf to manage events/finalizers
   - apiGroups: [""]
     resources: ["events", "secrets", "pods", "services", "pods/status"]
-    verbs: ["create", "get", "list", "watch", "patch", "delete"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
   # Permissions for apps API group resources (StatefulSets, Deployments)
   - apiGroups: ["apps"]
     resources: ["statefulsets", "deployments"]
