@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-KUBERNETES_MAX_NAME_LENGTH = 62
+KUBERNETES_MAX_NAME_LENGTH = 63
 GROUP = "kalavai.net"
 VERSION = "v1"
 PLURAL = "serverworkersets"
@@ -26,58 +26,68 @@ OWNER_LABEL = "serverworkerset"
 # Per-instance naming helpers
 # ---------------------------------------------------------------------------
 
-def _truncate_name(name: str, max_length: int = KUBERNETES_MAX_NAME_LENGTH) -> str:
-    """Truncate name to max_length, appending hash if truncated to ensure uniqueness."""
-    if len(name) <= max_length:
-        return name
+def _truncate_name(base: str, suffix: str = "", max_length: int = KUBERNETES_MAX_NAME_LENGTH) -> str:
+    """Truncate name to max_length, appending hash if truncated to ensure uniqueness.
+    
+    Args:
+        base: The base name (e.g., CR name or identifier)
+        suffix: The suffix to append (e.g., "-server", "-worker")
+        max_length: Maximum length for the final name
+    
+    Returns:
+        Truncated name with hash if needed, preserving the suffix
+    """
+    full_name = f"{base}{suffix}"
+    if len(full_name) <= max_length:
+        return full_name
     
     # Reserve 7 characters for hash suffix (-[6-char-hash])
     hash_suffix_length = 7
-    available_length = max_length - hash_suffix_length
+    available_length = max_length - hash_suffix_length - len(suffix)
     
     if available_length < 1:
         # Name is too short even for hash, use full hash
-        return hashlib.md5(name.encode()).hexdigest()[:max_length]
+        return hashlib.md5(full_name.encode()).hexdigest()[:max_length]
     
-    truncated = name[:available_length]
-    hash_value = hashlib.md5(name.encode()).hexdigest()[:6]
-    return f"{truncated}-{hash_value}"
+    truncated_base = base[:available_length]
+    hash_value = hashlib.md5(full_name.encode()).hexdigest()[:6]
+    return f"{truncated_base}{suffix}-{hash_value}"
 
 
 def _inst_server_sts(cr_name: str, idx: int) -> str:
-    return _truncate_name(f"{cr_name}-{idx}-server")
+    return _truncate_name(f"{cr_name}-{idx}", "-server")
 
 
 def _inst_worker_sts(cr_name: str, idx: int) -> str:
-    return _truncate_name(f"{cr_name}-{idx}-worker")
+    return _truncate_name(f"{cr_name}-{idx}", "-worker")
 
 
 def _inst_server_svc(cr_name: str, idx: int) -> str:
-    return _truncate_name(f"{cr_name}-{idx}-server")
+    return _truncate_name(f"{cr_name}-{idx}", "-server")
 
 
 def _inst_worker_svc(cr_name: str, idx: int) -> str:
-    return _truncate_name(f"{cr_name}-{idx}-worker")
+    return _truncate_name(f"{cr_name}-{idx}", "-worker")
 
 
 def _global_server_svc(cr_name: str) -> str:
-    return _truncate_name(f"{cr_name}-service")
+    return _truncate_name(cr_name, "-service")
 
 
 def _head_sts(cr_name: str) -> str:
-    return _truncate_name(f"{cr_name}-head")
+    return _truncate_name(cr_name, "-head")
 
 
 def _head_svc(cr_name: str) -> str:
-    return _truncate_name(f"{cr_name}-head")
+    return _truncate_name(cr_name, "-head")
 
 
 def _init_hook_job_name(cr_name: str) -> str:
-    return _truncate_name(f"{cr_name}-init-hook")
+    return _truncate_name(cr_name, "-init-hook")
 
 
 def _finalizer_hook_job_name(cr_name: str) -> str:
-    return _truncate_name(f"{cr_name}-finalizer-hook")
+    return _truncate_name(cr_name, "-finalizer-hook")
 
 
 def _inst_server_address(cr_name: str, idx: int, namespace: str) -> str:
@@ -93,7 +103,7 @@ def _inst_server_labels(cr_name: str, idx: int, custom_labels: dict = None) -> d
         OWNER_LABEL: cr_name,
         "serverworkerset-instance": str(idx),
         "serverworkerset-role": "server",
-        "serverworkerset-id": f"{cr_name}-{idx}",
+        "serverworkerset-id": _truncate_name(f"{cr_name}-{idx}", ""),
     }
     if custom_labels:
         labels.update(custom_labels)
@@ -105,7 +115,7 @@ def _inst_worker_labels(cr_name: str, idx: int, custom_labels: dict = None) -> d
         OWNER_LABEL: cr_name,
         "serverworkerset-instance": str(idx),
         "serverworkerset-role": "worker",
-        "serverworkerset-id": f"{cr_name}-{idx}",
+        "serverworkerset-id": _truncate_name(f"{cr_name}-{idx}", ""),
     }
     if custom_labels:
         labels.update(custom_labels)
@@ -116,7 +126,7 @@ def _head_labels(cr_name: str, custom_labels: dict = None) -> dict:
     labels = {
         OWNER_LABEL: cr_name,
         "serverworkerset-role": "head",
-        "serverworkerset-id": f"{cr_name}-head",
+        "serverworkerset-id": _truncate_name(cr_name, "-head"),
     }
     if custom_labels:
         labels.update(custom_labels)
@@ -349,7 +359,7 @@ def _delete_if_exists(api: _API, kind: str, obj_name: str, namespace: str):
 
 
 def _http_scaled_object_name(cr_name: str) -> str:
-    return _truncate_name(f"{cr_name}-http-scaler")
+    return _truncate_name(cr_name, "-http-scaler")
 
 
 def _build_http_scaled_object(
@@ -567,7 +577,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
             init_hook_labels = {
                 OWNER_LABEL: name,
                 "serverworkerset-role": "init-hook",
-                "serverworkerset-id": f"{name}-init-hook",
+                "serverworkerset-id": _truncate_name(name, "-init-hook"),
             }
             init_hook_labels.update(custom_labels)
             init_hook_job = _build_job(
@@ -842,7 +852,7 @@ def on_delete(spec, name, namespace, body, patch, **kwargs):
                 finalizer_hook_labels = {
                     OWNER_LABEL: name,
                     "serverworkerset-role": "finalizer-hook",
-                    "serverworkerset-id": f"{name}-finalizer-hook",
+                    "serverworkerset-id": _truncate_name(name, "-finalizer-hook"),
                 }
                 finalizer_hook_labels.update(custom_labels)
                 
