@@ -2,6 +2,15 @@ apiVersion: v1
 entries:
   serverworkerset-operator:
   - apiVersion: v2
+    appVersion: 0.1.7
+    created: "2026-05-21T12:10:45.907792517Z"
+    description: An operator to manage ServerWorkerSets
+    digest: d75b4ac93d3c7dfc590879e519a7efdbe562c54375360d8e356d88f4f5f22a63
+    name: serverworkerset-operator
+    urls:
+    - https://github.com/kalavai-net/server-worker-set/releases/download/serverworkerset-operator-0.1.7/serverworkerset-operator-0.1.7.tgz
+    version: 0.1.7
+  - apiVersion: v2
     appVersion: 0.1.6
     created: "2026-05-21T11:53:21.218689747Z"
     description: An operator to manage ServerWorkerSets
@@ -82,4 +91,4 @@ entries:
     urls:
     - https://github.com/kalavai-net/server-worker-set/releases/download/serverworkerset-operator-0.0.1/serverworkerset-operator-0.0.1.tgz
     version: 0.0.1
-generated: "2026-05-21T11:53:21.218730274Z"
+generated: "2026-05-21T12:10:45.907840987Z"
