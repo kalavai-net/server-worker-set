@@ -43,11 +43,6 @@ def _truncate_name(name: str, max_length: int = KUBERNETES_MAX_NAME_LENGTH) -> s
     hash_value = hashlib.md5(name.encode()).hexdigest()[:6]
     return f"{truncated}-{hash_value}"
 
-print(
-    len(_truncate_name("waaaaaaaaaaahyooo long what can we do I like long names and I cannot lie, let's see if this catches it"))
-)
-exit()
-
 
 def _inst_server_sts(cr_name: str, idx: int) -> str:
     return _truncate_name(f"{cr_name}-{idx}-server")
