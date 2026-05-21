@@ -21,6 +21,9 @@ PLURAL = "serverworkersets"
 # Label key used to mark all children of a ServerWorkerSet
 OWNER_LABEL = "serverworkerset"
 
+# Global API client instance (initialized after config is loaded)
+_global_api = None
+
 
 # ---------------------------------------------------------------------------
 # Per-instance naming helpers
@@ -296,6 +299,10 @@ def _build_job(
 
 class _API:
     def __init__(self):
+        try:
+            kubernetes.config.load_incluster_config()
+        except kubernetes.config.ConfigException:
+            kubernetes.config.load_kube_config()
         self.core = kubernetes.client.CoreV1Api()
         self.apps = kubernetes.client.AppsV1Api()
         self.custom = kubernetes.client.CustomObjectsApi()
@@ -545,7 +552,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
     svc_sticky_timeout = svc_spec.get("stickySessionTimeoutSeconds", 10800)
     svc_type = svc_spec.get("type", "ClusterIP")
 
-    api = _API()
+    api = _global_api
 
     # Reconcile the single shared ClusterIP service across all server instances
     global_selector = {
@@ -689,7 +696,7 @@ def sync_status(name, namespace, spec, patch, **kwargs):
     desired_instances = spec.get("replicas", 1)
     workers_per_instance = spec.get("workersPerInstance", 1)
     head_spec = spec.get("head")
-    api = _API()
+    api = _global_api
 
     ready_instances = 0
     existing_instances = 0
@@ -797,7 +804,7 @@ def on_delete(spec, name, namespace, body, patch, **kwargs):
     # If finalizer hook is defined, execute it before deletion
     if finalizer_hook_spec:
         job_name = _finalizer_hook_job_name(name)
-        api = _API()
+        api = _global_api
         
         # Check if Job exists and its status
         try:
@@ -1064,7 +1071,7 @@ def on_pod_event(body, event, **kwargs):
     if not detected_event:
         return
     
-    api = _API()
+    api = _global_api
     
     # Get policies from the parent CRD
     policies = _get_crd_policies(api, owner_info["namespace"], owner_info["cr_name"])
@@ -1088,10 +1095,14 @@ def on_pod_event(body, event, **kwargs):
 
 @kopf.on.startup()
 def configure(settings: kopf.OperatorSettings, **kwargs):
+    global _global_api
     kubernetes.config.load_incluster_config() if _running_in_cluster() else \
         kubernetes.config.load_kube_config()
     settings.persistence.finalizer = f"{GROUP}/finalizer"
     settings.posting.level = logging.INFO
+    
+    # Initialize global API client after config is loaded
+    _global_api = _API()
 
 
 def _running_in_cluster() -> bool:
