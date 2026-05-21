@@ -4,6 +4,7 @@ import copy
 import logging
 import re
 import time
+import hashlib
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
+KUBERNETES_MAX_NAME_LENGTH = 63
 GROUP = "kalavai.net"
 VERSION = "v1"
 PLURAL = "serverworkersets"
@@ -24,40 +26,58 @@ OWNER_LABEL = "serverworkerset"
 # Per-instance naming helpers
 # ---------------------------------------------------------------------------
 
+def _truncate_name(name: str, max_length: int = KUBERNETES_MAX_NAME_LENGTH) -> str:
+    """Truncate name to max_length, appending hash if truncated to ensure uniqueness."""
+    if len(name) <= max_length:
+        return name
+    
+    # Reserve 9 characters for hash suffix (-[6-char-hash])
+    hash_suffix_length = 7
+    available_length = max_length - hash_suffix_length
+    
+    if available_length < 1:
+        # Name is too short even for hash, use full hash
+        return hashlib.md5(name.encode()).hexdigest()[:max_length]
+    
+    truncated = name[:available_length]
+    hash_value = hashlib.md5(name.encode()).hexdigest()[:8]
+    return f"{truncated}-{hash_value}"
+
+
 def _inst_server_sts(cr_name: str, idx: int) -> str:
-    return f"{cr_name}-{idx}-server"
+    return _truncate_name(f"{cr_name}-{idx}-server")
 
 
 def _inst_worker_sts(cr_name: str, idx: int) -> str:
-    return f"{cr_name}-{idx}-worker"
+    return _truncate_name(f"{cr_name}-{idx}-worker")
 
 
 def _inst_server_svc(cr_name: str, idx: int) -> str:
-    return f"{cr_name}-{idx}-server"
+    return _truncate_name(f"{cr_name}-{idx}-server")
 
 
 def _inst_worker_svc(cr_name: str, idx: int) -> str:
-    return f"{cr_name}-{idx}-worker"
+    return _truncate_name(f"{cr_name}-{idx}-worker")
 
 
 def _global_server_svc(cr_name: str) -> str:
-    return f"{cr_name}-service"
+    return _truncate_name(f"{cr_name}-service")
 
 
 def _head_sts(cr_name: str) -> str:
-    return f"{cr_name}-head"
+    return _truncate_name(f"{cr_name}-head")
 
 
 def _head_svc(cr_name: str) -> str:
-    return f"{cr_name}-head"
+    return _truncate_name(f"{cr_name}-head")
 
 
 def _init_hook_job_name(cr_name: str) -> str:
-    return f"{cr_name}-init-hook"
+    return _truncate_name(f"{cr_name}-init-hook")
 
 
 def _finalizer_hook_job_name(cr_name: str) -> str:
-    return f"{cr_name}-finalizer-hook"
+    return _truncate_name(f"{cr_name}-finalizer-hook")
 
 
 def _inst_server_address(cr_name: str, idx: int, namespace: str) -> str:
@@ -329,7 +349,7 @@ def _delete_if_exists(api: _API, kind: str, obj_name: str, namespace: str):
 
 
 def _http_scaled_object_name(cr_name: str) -> str:
-    return f"{cr_name}-http-scaler"
+    return _truncate_name(f"{cr_name}-http-scaler")
 
 
 def _build_http_scaled_object(
