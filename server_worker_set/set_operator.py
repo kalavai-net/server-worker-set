@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-KUBERNETES_MAX_NAME_LENGTH = 63
+KUBERNETES_MAX_NAME_LENGTH = 62
 GROUP = "kalavai.net"
 VERSION = "v1"
 PLURAL = "serverworkersets"
@@ -31,7 +31,7 @@ def _truncate_name(name: str, max_length: int = KUBERNETES_MAX_NAME_LENGTH) -> s
     if len(name) <= max_length:
         return name
     
-    # Reserve 9 characters for hash suffix (-[6-char-hash])
+    # Reserve 7 characters for hash suffix (-[6-char-hash])
     hash_suffix_length = 7
     available_length = max_length - hash_suffix_length
     
@@ -40,8 +40,13 @@ def _truncate_name(name: str, max_length: int = KUBERNETES_MAX_NAME_LENGTH) -> s
         return hashlib.md5(name.encode()).hexdigest()[:max_length]
     
     truncated = name[:available_length]
-    hash_value = hashlib.md5(name.encode()).hexdigest()[:8]
+    hash_value = hashlib.md5(name.encode()).hexdigest()[:6]
     return f"{truncated}-{hash_value}"
+
+print(
+    len(_truncate_name("waaaaaaaaaaahyooo long what can we do I like long names and I cannot lie, let's see if this catches it"))
+)
+exit()
 
 
 def _inst_server_sts(cr_name: str, idx: int) -> str:
