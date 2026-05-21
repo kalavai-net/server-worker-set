@@ -299,10 +299,10 @@ def _build_job(
 
 class _API:
     def __init__(self):
-        try:
-            kubernetes.config.load_incluster_config()
-        except kubernetes.config.ConfigException:
-            kubernetes.config.load_kube_config()
+        # try:
+        #     kubernetes.config.load_incluster_config()
+        # except kubernetes.config.ConfigException:
+        #     kubernetes.config.load_kube_config()
         self.core = kubernetes.client.CoreV1Api()
         self.apps = kubernetes.client.AppsV1Api()
         self.custom = kubernetes.client.CustomObjectsApi()
