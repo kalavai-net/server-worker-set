@@ -57,12 +57,22 @@ def _truncate_name(base: str, suffix: str = "", max_length: int = KUBERNETES_MAX
     return f"{truncated_base}{suffix}-{hash_value}"
 
 
+def _truncate_for_controller_hash(base: str, suffix: str = "") -> str:
+    """Truncate name to leave room for Kubernetes controller-revision-hash suffix.
+    
+    Kubernetes adds a 10-11 character hash suffix to StatefulSet names for the
+    controller-revision-hash label, so we need to truncate to 52 characters to
+    stay under the 63-character limit.
+    """
+    return _truncate_name(base, suffix, max_length=52)
+
+
 def _inst_server_sts(cr_name: str, idx: int) -> str:
-    return _truncate_name(f"{cr_name}-{idx}", "-server")
+    return _truncate_for_controller_hash(f"{cr_name}-{idx}", "-server")
 
 
 def _inst_worker_sts(cr_name: str, idx: int) -> str:
-    return _truncate_name(f"{cr_name}-{idx}", "-worker")
+    return _truncate_for_controller_hash(f"{cr_name}-{idx}", "-worker")
 
 
 def _inst_server_svc(cr_name: str, idx: int) -> str:
@@ -78,7 +88,7 @@ def _global_server_svc(cr_name: str) -> str:
 
 
 def _head_sts(cr_name: str) -> str:
-    return _truncate_name(cr_name, "-head")
+    return _truncate_for_controller_hash(cr_name, "-head")
 
 
 def _head_svc(cr_name: str) -> str:
@@ -103,7 +113,7 @@ def _inst_server_address(cr_name: str, idx: int, namespace: str) -> str:
 
 def _inst_server_labels(cr_name: str, idx: int, custom_labels: dict = None) -> dict:
     labels = {
-        OWNER_LABEL: cr_name,
+        OWNER_LABEL: _truncate_name(cr_name, ""),
         "serverworkerset-instance": str(idx),
         "serverworkerset-role": "server",
         "serverworkerset-id": _truncate_name(f"{cr_name}-{idx}", ""),
@@ -115,7 +125,7 @@ def _inst_server_labels(cr_name: str, idx: int, custom_labels: dict = None) -> d
 
 def _inst_worker_labels(cr_name: str, idx: int, custom_labels: dict = None) -> dict:
     labels = {
-        OWNER_LABEL: cr_name,
+        OWNER_LABEL: _truncate_name(cr_name, ""),
         "serverworkerset-instance": str(idx),
         "serverworkerset-role": "worker",
         "serverworkerset-id": _truncate_name(f"{cr_name}-{idx}", ""),
@@ -127,7 +137,7 @@ def _inst_worker_labels(cr_name: str, idx: int, custom_labels: dict = None) -> d
 
 def _head_labels(cr_name: str, custom_labels: dict = None) -> dict:
     labels = {
-        OWNER_LABEL: cr_name,
+        OWNER_LABEL: _truncate_name(cr_name, ""),
         "serverworkerset-role": "head",
         "serverworkerset-id": _truncate_name(cr_name, "-head"),
     }
@@ -149,11 +159,23 @@ def _inject_dns_env(
     server_addr: str,
     workers_addresses: str,
 ) -> dict:
-    """Inject SERVER_ADDRESS and WORKERS_ADDRESSES into every container."""
+    """Inject SERVER_ADDRESS, WORKERS_ADDRESSES, and WORKER_INDEX into every container.
+    
+    Note: WORKER_INDEX reflects the node-rank using Kubernetes native pod index label.
+    """
     pod_spec = copy.deepcopy(pod_spec)
     dns_env = [
         {"name": "SERVER_ADDRESS", "value": server_addr},
         {"name": "WORKERS_ADDRESSES", "value": workers_addresses},
+        {
+            "name": "WORKER_INDEX",
+            "valueFrom": {
+                "fieldRef": {
+                    "apiVersion": "v1",
+                    "fieldPath": "metadata.labels['apps.kubernetes.io/pod-index']"
+                }
+            }
+        }
     ]
     for container in pod_spec.get("containers", []):
         existing = {e["name"] for e in container.get("env", [])}
@@ -582,7 +604,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
             global_service_address = f"{svc_name}.{namespace}.svc.cluster.local"
             init_hook_pod_spec = _inject_global_service_env(init_hook_pod_spec, global_service_address, svc_port)
             init_hook_labels = {
-                OWNER_LABEL: name,
+                OWNER_LABEL: _truncate_name(name, ""),
                 "serverworkerset-role": "init-hook",
                 "serverworkerset-id": _truncate_name(name, "-init-hook"),
             }
@@ -857,7 +879,7 @@ def on_delete(spec, name, namespace, body, patch, **kwargs):
                 global_service_address = f"{svc_name}.{namespace}.svc.cluster.local"
                 finalizer_hook_pod_spec = _inject_global_service_env(finalizer_hook_pod_spec, global_service_address, svc_port)
                 finalizer_hook_labels = {
-                    OWNER_LABEL: name,
+                    OWNER_LABEL: _truncate_name(name, ""),
                     "serverworkerset-role": "finalizer-hook",
                     "serverworkerset-id": _truncate_name(name, "-finalizer-hook"),
                 }

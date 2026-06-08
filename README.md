@@ -50,6 +50,8 @@ Each instance's pods receive env vars scoped to **that instance only**:
 |---|---|
 | `SERVER_ADDRESS` | `<name>-<i>-server-0.<name>-<i>-server.<ns>.svc.cluster.local` |
 | `WORKERS_ADDRESSES` | comma-separated list of all worker FQDNs for this instance |
+| `WORKER_INDEX` | pod index (0, 1, 2, ...) for this worker |
+```
 
 `WORKERS_ADDRESSES` example for `workersPerInstance=3`, instance `0`:
 ```
