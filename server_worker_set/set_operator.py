@@ -184,25 +184,6 @@ def _inject_dns_env(
                 container.setdefault("env", []).append(ev)
     return pod_spec
 
-
-def _inject_global_service_env(
-    pod_spec: dict,
-    global_service_address: str,
-    port: int,
-) -> dict:
-    """Inject GLOBAL_SERVICE_ADDRESS into every container of the head pod."""
-    pod_spec = copy.deepcopy(pod_spec)
-    service_env = [
-        {"name": "GLOBAL_SERVICE_ADDRESS", "value": f"{global_service_address}"},
-        {"name": "GLOBAL_SERVICE_PORT", "value": f"{port}"},
-    ]
-    for container in pod_spec.get("containers", []):
-        existing = {e["name"] for e in container.get("env", [])}
-        for ev in service_env:
-            if ev["name"] not in existing:
-                container.setdefault("env", []).append(ev)
-    return pod_spec
-
 def _inject_service_env_vars(
     pod_spec: dict,
     global_service_address: str = None,
