@@ -4,7 +4,7 @@ metadata:
   name: my-sws
   namespace: default
 spec:
-  replicas: 1              # number of (server + N-worker) instances — KEDA scales this
+  replicas: 2              # number of (server + N-worker) instances — KEDA scales this
   workersPerInstance: 2   # each instance has 1 server + 2 workers
   # Custom labels applied to all resources created by this ServerWorkerSet
   labels:
@@ -23,6 +23,8 @@ spec:
             # Your arbitrary init code here (e.g., create database schema, download models)
             echo "GLOBAL_SERVICE_ADDRESS: $GLOBAL_SERVICE_ADDRESS"
             echo "GLOBAL_SERVICE_PORT: $GLOBAL_SERVICE_PORT"
+            echo "All environment variables:"
+            env
             sleep 10
             echo "Initialization complete"
       restartPolicy: OnFailure
@@ -38,8 +40,8 @@ spec:
           - |
             echo "Running cleanup tasks..."
             # Your arbitrary cleanup code here (e.g., delete temporary data, notify external systems)
-            echo "GLOBAL_SERVICE_ADDRESS: $GLOBAL_SERVICE_ADDRESS"
-            echo "GLOBAL_SERVICE_PORT: $GLOBAL_SERVICE_PORT"
+            echo "All environment variables:"
+            env
             sleep 10
             echo "Cleanup complete"
       restartPolicy: OnFailure
@@ -57,6 +59,8 @@ spec:
             apt update && apt install -y netcat-openbsd
             echo "GLOBAL_SERVICE_ADDRESS: $GLOBAL_SERVICE_ADDRESS"
             echo "GLOBAL_SERVICE_PORT: $GLOBAL_SERVICE_PORT"
+            echo "All environment variables:"
+            env
             ADDRESS="${GLOBAL_SERVICE_ADDRESS}:${GLOBAL_SERVICE_PORT}"
             echo "ADDRESS: $ADDRESS"
             echo "Waiting for service to be ready..."
@@ -65,7 +69,7 @@ spec:
               sleep 5
             done
             echo "Service is ready!"
-            tail -f /dev/null
+            #tail -f /dev/null
   server:
     spec:
       containers:

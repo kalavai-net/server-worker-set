@@ -203,6 +203,35 @@ def _inject_global_service_env(
                 container.setdefault("env", []).append(ev)
     return pod_spec
 
+def _inject_service_env_vars(
+    pod_spec: dict,
+    global_service_address: str = None,
+    port: int = None,
+    server_addresses: List[str] = None,
+) -> dict:
+    """Inject GLOBAL_SERVICE_ADDRESS, GLOBAL_SERVICE_PORT, and SERVER_ADDRESSES into every container.
+    
+    This combined function ensures all service-related environment variables are injected together
+    without overriding each other.
+    """
+    pod_spec = copy.deepcopy(pod_spec)
+    env_vars = []
+    
+    if global_service_address is not None:
+        env_vars.append({"name": "GLOBAL_SERVICE_ADDRESS", "value": global_service_address})
+    if port is not None:
+        env_vars.append({"name": "GLOBAL_SERVICE_PORT", "value": str(port)})
+    if server_addresses is not None:
+        addresses_str = ",".join(server_addresses)
+        env_vars.append({"name": "SERVER_ADDRESSES", "value": addresses_str})
+    
+    for container in pod_spec.get("containers", []):
+        existing = {e["name"] for e in container.get("env", [])}
+        for ev in env_vars:
+            if ev["name"] not in existing:
+                container.setdefault("env", []).append(ev)
+    return pod_spec
+
 
 def _build_headless_service(
     svc_name: str, namespace: str, selector: dict
@@ -518,9 +547,15 @@ def _reconcile_head(
     port: int,
     custom_labels: dict,
     body,
+    server_addresses: List[str] = None,
 ):
     """Ensure the head StatefulSet and Service exist and are up to date."""
-    head_spec = _inject_global_service_env(head_pod_spec, global_service_address, port)
+    head_spec = _inject_service_env_vars(
+        head_pod_spec,
+        global_service_address=global_service_address,
+        port=port,
+        server_addresses=server_addresses,
+    )
     head_sel = _head_labels(cr_name, custom_labels)
 
     objs = [
@@ -589,6 +624,9 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
     )
     _apply_object(api, global_svc, body)
 
+    # Calculate all server addresses for injection into head and init hook
+    server_addresses = [_inst_server_address(name, idx, namespace) for idx in range(desired_instances)]
+
     # Execute init hook if defined (only runs once on creation)
     init_hook_spec = spec.get("initHook")
     if init_hook_spec:
@@ -600,9 +638,14 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
         else:
             # Job doesn't exist or hasn't been marked as completed, create it
             init_hook_pod_spec = dict(init_hook_spec["spec"])
-            # Inject global service address into init hook
+            # Inject global service address and server addresses into init hook
             global_service_address = f"{svc_name}.{namespace}.svc.cluster.local"
-            init_hook_pod_spec = _inject_global_service_env(init_hook_pod_spec, global_service_address, svc_port)
+            init_hook_pod_spec = _inject_service_env_vars(
+                init_hook_pod_spec,
+                global_service_address=global_service_address,
+                port=svc_port,
+                server_addresses=server_addresses,
+            )
             init_hook_labels = {
                 OWNER_LABEL: _truncate_name(name, ""),
                 "serverworkerset-role": "init-hook",
@@ -624,7 +667,7 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
         head_pod_spec = dict(head_spec["spec"])
         _reconcile_head(
             api, name, namespace, head_pod_spec, global_service_address, svc_port,
-            custom_labels, body,
+            custom_labels, body, server_addresses,
         )
         logger.info("Reconciled head for %s/%s", namespace, name)
     else:
@@ -872,12 +915,19 @@ def on_delete(spec, name, namespace, body, patch, **kwargs):
                 logger.info("Creating finalizer hook Job for %s/%s", namespace, name)
                 custom_labels = dict(spec.get("labels", {}))
                 finalizer_hook_pod_spec = dict(finalizer_hook_spec["spec"])
-                # Inject global service address into finalizer hook
+                # Inject global service address and server addresses into finalizer hook
                 svc_spec = spec.get("service", {})
                 svc_name = svc_spec.get("name", _global_server_svc(name))
                 svc_port = svc_spec.get("port", 8080)
                 global_service_address = f"{svc_name}.{namespace}.svc.cluster.local"
-                finalizer_hook_pod_spec = _inject_global_service_env(finalizer_hook_pod_spec, global_service_address, svc_port)
+                desired_instances = spec.get("replicas", 1)
+                server_addresses = [_inst_server_address(name, idx, namespace) for idx in range(desired_instances)]
+                finalizer_hook_pod_spec = _inject_service_env_vars(
+                    finalizer_hook_pod_spec,
+                    global_service_address=global_service_address,
+                    port=svc_port,
+                    server_addresses=server_addresses,
+                )
                 finalizer_hook_labels = {
                     OWNER_LABEL: _truncate_name(name, ""),
                     "serverworkerset-role": "finalizer-hook",

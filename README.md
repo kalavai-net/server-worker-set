@@ -70,7 +70,7 @@ The CRD exposes `/scale` with:
 
 ```bash
 # Install CRD
-kubectl apply -f crd.yaml
+kubectl apply -f chart/serverworkerset/template/crd.yaml
 
 # Run operator locally (dev)
 pip install -r requirements.txt
