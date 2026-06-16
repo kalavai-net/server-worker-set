@@ -231,6 +231,23 @@ spec:
                         Scaling metric configuration passed verbatim to HTTPScaledObject.spec.scalingMetric.
                         Supports requestRate or concurrency sub-objects.
                       x-kubernetes-preserve-unknown-fields: true
+                loadBalancer:
+                  type: object
+                  description: >
+                    Optional Istio DestinationRule for load balancing configuration.
+                    Requires Istio to be installed in the cluster.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                      description: Enable or disable load balancing DestinationRule. When false, no DestinationRule is created.
+                    trafficPolicy:
+                      type: string
+                      enum: ["ROUND_ROBIN", "LEAST_REQUEST", "RANDOM"]
+                      default: "ROUND_ROBIN"
+                      description: >
+                        Load balancing policy to apply to the service.
+                        Corresponds to DestinationRule.spec.trafficPolicy.loadBalancer.simple.
             status:
               type: object
               properties:

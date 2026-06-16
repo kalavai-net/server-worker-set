@@ -365,6 +365,11 @@ def _apply_object(api: _API, obj: dict, body):
             existing = api.batch.read_namespaced_job(obj_name, ns)
             obj["metadata"]["resourceVersion"] = existing.metadata.resource_version
             api.batch.replace_namespaced_job(obj_name, ns, obj)
+        elif kind == "DestinationRule":
+            group, version = "networking.istio.io", "v1beta1"
+            existing = api.custom.get_namespaced_custom_object(group, version, ns, "destinationrules", obj_name)
+            obj["metadata"]["resourceVersion"] = existing["metadata"]["resourceVersion"]
+            api.custom.replace_namespaced_custom_object(group, version, ns, "destinationrules", obj_name, obj)
     except kubernetes.client.exceptions.ApiException as e:
         if e.status == 404:
             if kind == "Service":
@@ -376,6 +381,9 @@ def _apply_object(api: _API, obj: dict, body):
                 api.custom.create_namespaced_custom_object(group, version, ns, "httpscaledobjects", obj)
             elif kind == "Job":
                 api.batch.create_namespaced_job(ns, obj)
+            elif kind == "DestinationRule":
+                group, version = "networking.istio.io", "v1beta1"
+                api.custom.create_namespaced_custom_object(group, version, ns, "destinationrules", obj)
         else:
             raise
 
@@ -392,6 +400,10 @@ def _delete_if_exists(api: _API, kind: str, obj_name: str, namespace: str):
             )
         elif kind == "Job":
             api.batch.delete_namespaced_job(obj_name, namespace)
+        elif kind == "DestinationRule":
+            api.custom.delete_namespaced_custom_object(
+                "networking.istio.io", "v1beta1", namespace, "destinationrules", obj_name
+            )
     except kubernetes.client.exceptions.ApiException as e:
         if e.status != 404:
             raise
@@ -399,6 +411,10 @@ def _delete_if_exists(api: _API, kind: str, obj_name: str, namespace: str):
 
 def _http_scaled_object_name(cr_name: str) -> str:
     return _truncate_name(cr_name, "-http-scaler")
+
+
+def _destination_rule_name(cr_name: str) -> str:
+    return _truncate_name(cr_name, "-lb-policy")
 
 
 def _build_http_scaled_object(
@@ -447,6 +463,36 @@ def _build_http_scaled_object(
     if scaling_metric:
         obj["spec"]["scalingMetric"] = scaling_metric
     return obj
+
+
+def _build_destination_rule(
+    name: str,
+    namespace: str,
+    service_name: str,
+    traffic_policy: str,
+    custom_labels: dict = None,
+) -> dict:
+    labels = {}
+    if custom_labels:
+        labels.update(custom_labels)
+    
+    return {
+        "apiVersion": "networking.istio.io/v1beta1",
+        "kind": "DestinationRule",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "host": service_name,
+            "trafficPolicy": {
+                "loadBalancer": {
+                    "simple": traffic_policy
+                }
+            }
+        }
+    }
 
 # ---------------------------------------------------------------------------
 # Core reconciliation logic
@@ -716,6 +762,23 @@ def reconcile(spec, name, namespace, body, patch, **kwargs):
         logger.info("Reconciled HTTPScaledObject %s/%s", namespace, hso_name)
     else:
         _delete_if_exists(api, "HTTPScaledObject", hso_name, namespace)
+
+    # -----------------------------------------------------------------------
+    # Load Balancer - DestinationRule
+    # -----------------------------------------------------------------------
+    lb_spec = spec.get("loadBalancer", {})
+    lb_enabled = lb_spec.get("enabled", False)
+    dr_name = _destination_rule_name(name)
+
+    if lb_enabled:
+        lb_traffic_policy = lb_spec.get("trafficPolicy", "ROUND_ROBIN")
+        dr = _build_destination_rule(
+            dr_name, namespace, svc_name, lb_traffic_policy, custom_labels
+        )
+        _apply_object(api, dr, body)
+        logger.info("Reconciled DestinationRule %s/%s", namespace, dr_name)
+    else:
+        _delete_if_exists(api, "DestinationRule", dr_name, namespace)
 
     # Update status - don't set replicas to desired_instances immediately
     # Let sync_status handle the actual count based on existing StatefulSets

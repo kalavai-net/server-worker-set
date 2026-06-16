@@ -191,6 +191,70 @@ spec:
         path: /
 ```
 
+## Load Balancing
+
+Only required if `spec.loadBalancer.enabled` is `true`.
+
+Install Istio Gateway:
+
+```bash
+helm repo add istio https://istio-release.storage.googleapis.com/charts
+helm repo update
+# CRDs and Gateway API
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/experimental-install.yaml
+helm install istio-base istio/base -n istio-system --create-namespace --wait
+# istiod control plane, cni agent and ztunnel
+helm install istiod istio/istiod --namespace istio-system --set profile=ambient --set global.platform=k3s --wait
+helm install istio-cni istio/cni -n istio-system --set profile=ambient --set global.platform=k3s --set cni.cniBinDir=/usr/bin --set cni.cniConfDir=/var/lib/rancher/k3s/agent/etc/cni/net.d --wait
+helm install ztunnel istio/ztunnel -n istio-system --set global.platform=k3s --wait
+```
+
+### Test load balancing
+
+Load balancing willl be automatically applied, using the traffic policy defined in the specs:
+
+Example:
+
+```yaml
+apiVersion: kalavai.net/v1
+kind: ServerWorkerSet
+spec:
+  service:
+    name: sws-service
+    port: 8080
+    targetPort: 8080
+    type: NodePort
+  loadBalancer:
+    enabled: true
+    trafficPolicy: LEAST_REQUEST
+  ...
+```
+
+By default, direct calls to the service sws-service will be load balanced. If you are using an ingress to connect to the service, and wish to have load balancing, you must annotate your ingress:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app-ingress
+  namespace: default
+  annotations:
+    # CRITICAL: Forces Traefik to use K8s Service LB instead of Pod IPs
+    traefik.ingress.kubernetes.io/service.nativelb: "true"
+```
+
+Test load balancing:
+
+```bash
+kubectl run mesh-tester --image=curlimages/curl -n default -i --tty --rm -- /bin/sh
+$ while true; do curl -H "Connection: close" -s http://my-sws-service:8080/; sleep 1; done
+```
+
+Then run:
+
+```bash
+while true; do curl -H "Connection: close" -s http://my-sws-service:8080/; sleep 1; done
+```
 
 ## Failure Handling Policies
 

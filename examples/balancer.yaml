@@ -1,0 +1,95 @@
+apiVersion: kalavai.net/v1
+kind: ServerWorkerSet
+metadata:
+  name: my-sws
+  namespace: default
+spec:
+  replicas: 2              # number of (server + N-worker) instances — KEDA scales this
+  workersPerInstance: 0   # each instance has 1 server + 2 workers
+  server:
+    spec:
+      containers:
+      - name: server
+        image: python:3.12-slim
+        # SERVER_ADDRESS and WORKERS_ADDRESSES are injected per-instance automatically.
+        # e.g. SERVER_ADDRESS=my-sws-0-server-0.my-sws-0-server.default.svc.cluster.local
+        command: 
+        - bash
+        - -c
+        - |
+          echo "Starting server..."
+          python3 -u -c "
+          from http.server import HTTPServer, SimpleHTTPRequestHandler
+          import threading
+          count = 0
+          active = 0
+          lock = threading.Lock()
+          class H(SimpleHTTPRequestHandler):
+              def log_message(self, format, *args):
+                  pass
+              def do_GET(self):
+                  global count, active
+                  with lock:
+                      count += 1
+                      active += 1
+                      print(f'Total: {count}, Active: {active}')
+                  super().do_GET()
+                  with lock:
+                      active -= 1
+                      print(f'Request done. Active: {active}')
+          HTTPServer(('0.0.0.0', 8080), H).serve_forever()
+          "
+
+        ports:
+          - containerPort: 8080
+        # resources:
+        #   limits:
+        #     nvidia.com/gpu: "1"
+    policy:
+    # Restart the entire instance (server + all workers) if server fails
+    - event: PodFailed
+      action: RestartInstance
+    # Replace just the server pod on OOM kill (may recover with fresh memory)
+    - event: OOMKilled
+      action: RestartInstance
+    # Restart instance on eviction to migrate the whole workload
+    - event: PodEvicted
+      action: RestartInstance
+    - event: Unknown
+      action: RestartInstance
+  worker:
+    spec:
+      containers:
+      - name: worker
+        image: python:3.12-slim
+        # SERVER_ADDRESS points to THIS instance's server (not shared across instances).
+        command:
+          - bash
+          - -c
+          - |
+            echo "Starting worker..."
+            tail -f /dev/null
+    policy:
+    # Workers typically just get replaced on failure (other workers keep running)
+    - event: PodFailed
+      action: ReplacePod
+    # OOM killed workers get replaced with fresh pod
+    - event: OOMKilled
+      action: ReplacePod
+    # Evicted workers get replaced (only affects this worker)
+    - event: PodEvicted
+      action: ReplacePod
+    # Unknown state - try replacing first
+    - event: Unknown
+      action: ReplacePod
+  # service controls how the single shared server Service is exposed.
+  service:
+    name: my-sws-service
+    port: 8080           # port on the ClusterIP service
+    targetPort: 8080     # container port (defaults to port)
+    stickySession: false  # pin a client IP to one server pod
+    stickySessionTimeoutSeconds: 10800  # 3 h default
+    type: NodePort  # ClusterIP (default) or NodePort
+  loadBalancer:
+    enabled: true
+    trafficPolicy: ROUND_ROBIN
