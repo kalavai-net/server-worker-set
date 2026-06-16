@@ -229,7 +229,7 @@ def _build_headless_service(
             "clusterIP": "None",
             "selector": selector,
             "publishNotReadyAddresses": True,  # Add this line
-            "ports": [{"name": "placeholder", "port": 1, "targetPort": 1}],
+            "ports": [{"name": "placeholder", "port": 1, "targetPort": 1, "appProtocol": "http"}],
         },
     }
 
@@ -247,7 +247,7 @@ def _build_global_service(
     spec: dict = {
         "type": service_type,
         "selector": selector,
-        "ports": [{"name": "app", "port": port, "targetPort": target_port}],
+        "ports": [{"name": "app", "port": port, "targetPort": target_port, "appProtocol": "http"}],
     }
     if sticky:
         spec["sessionAffinity"] = "ClientIP"
