@@ -92,4 +92,25 @@ spec:
     type: NodePort  # ClusterIP (default) or NodePort
   loadBalancer:
     enabled: true
-    trafficPolicy: ROUND_ROBIN
+    trafficPolicy: RANDOM
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-sws-ingress
+  annotations:
+    # CRITICAL: Forces Traefik to use K8s Service LB instead of Pod IPs
+    traefik.ingress.kubernetes.io/service.nativelb: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: my-sws.spaces.kalavai.net
+    http:
+      paths:
+      - backend:
+          service:
+            name: my-sws-service
+            port:
+              number: 8080 # match internal port
+        path: /
+        pathType: Prefix

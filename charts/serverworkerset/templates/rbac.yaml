@@ -28,6 +28,10 @@ rules:
   - apiGroups: ["http.keda.sh"]
     resources: ["httpscaledobjects"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Permissions for Istio DestinationRules
+  - apiGroups: ["networking.istio.io"]
+    resources: ["destinationrules"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # all cluster
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
