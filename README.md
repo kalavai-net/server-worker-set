@@ -230,24 +230,12 @@ spec:
   ...
 ```
 
-By default, direct calls to the service sws-service will be load balanced. If you are using an ingress to connect to the service, and wish to have load balancing, you must annotate your ingress:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-app-ingress
-  namespace: default
-  annotations:
-    # CRITICAL: Forces Traefik to use K8s Service LB instead of Pod IPs
-    traefik.ingress.kubernetes.io/service.nativelb: "true"
-```
+Direct calls to the service `sws-service` will be load balanced. If you are using an ingress to connect to the service, the service is bypassed and traffic goes directly to the pod, which means load balancing rules fall under the default kubernetes behaviour (round robin). We are working on a solution to enable load balancing through the ingress.
 
 Test load balancing:
 
 ```bash
 kubectl run mesh-tester --image=curlimages/curl -n default -i --tty --rm -- /bin/sh
-$ while true; do curl -H "Connection: close" -s http://my-sws-service:8080/; sleep 1; done
 ```
 
 Then run:
@@ -255,6 +243,7 @@ Then run:
 ```bash
 while true; do curl -H "Connection: close" -s http://my-sws-service:8080/; sleep 1; done
 ```
+
 
 ## Failure Handling Policies
 

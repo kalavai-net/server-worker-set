@@ -1,59 +1,132 @@
 apiVersion: kalavai.net/v1
 kind: ServerWorkerSet
 metadata:
-  name: scale-llamacpp
+  name: scale-vllm
   namespace: default
 spec:
-  replicas: 2             
-  workersPerInstance: 1   
+  replicas: 5
+  workersPerInstance: 1
   labels:
     custom-label: "value"
+  head:
+    spec:
+      containers:
+      - name: registrar-sidecar
+        image: ghcr.io/kalavai-net/kalavai-registrar:latest
+        imagePullPolicy: Always
+        command:
+        - sh
+        - -c
+        - |
+          # 1. register model
+          echo "REGISTER MODEL WITH GATEWAY..."
+          export MODEL_API_BASE="http://scale-vllm-0-server:8080/v1";
+          /workspace/start_point.sh \
+            --litellm_kalavai_extras='{}' \
+            --litellm_access_group=''
+          export MODEL_API_BASE="http://scale-vllm-1-server:8080/v1";
+          /workspace/start_point.sh \
+            --litellm_kalavai_extras='{}' \
+            --litellm_access_group=''
+          export MODEL_API_BASE="http://scale-vllm-2-server:8080/v1";
+          /workspace/start_point.sh \
+            --litellm_kalavai_extras='{}' \
+            --litellm_access_group=''
+          export MODEL_API_BASE="http://scale-vllm-3-server:8080/v1";
+          /workspace/start_point.sh \
+            --litellm_kalavai_extras='{}' \
+            --litellm_access_group=''
+          export MODEL_API_BASE="http://scale-vllm-4-server:8080/v1";
+          /workspace/start_point.sh \
+            --litellm_kalavai_extras='{}' \
+            --litellm_access_group=''
+          tail -f /dev/null
+        env:
+        - name: LITELLM_MODEL_NAME
+          value: "Intel/Qwen3.6-35B-A3B-int4-mixed-AutoRound"
+        - name: LITELLM_BASE_URL
+          value: https://gateway-default-gateway.spaces.kalavai.net
+        - name: LITELLM_KEY
+          value: sk-1234
+        - name: MODEL_ID
+          value: "Intel/Qwen3.6-35B-A3B-int4-mixed-AutoRound"
+        - name: DEPLOYMENT_ID
+          value: test-1
+        - name: PROVIDER
+          value: hosted_vllm
+  finalizerHook:
+    # Used for model deregistration
+    spec:
+      containers:
+      - name: registrar-sidecar
+        image: ghcr.io/kalavai-net/kalavai-registrar:latest
+        imagePullPolicy: Always
+        command:
+        - sh
+        - -c
+        - |
+          # 1. deregister model
+          /workspace/cleanup.sh
+        env:
+        - name: LITELLM_BASE_URL
+          value: https://gateway-default-gateway.spaces.kalavai.net/
+        # secret may be deleted before this is run, so hardcode the key
+        - name: LITELLM_KEY
+          value: sk-1234
+        - name: DEPLOYMENT_ID
+          value: test-1
   server:
     spec:
       runtimeClassName: nvidia
       nodeSelector:
-        kalavai/region: uspor01
+        kalavai/region: frsbg01
       containers:
-        - name: server
-          image: ghcr.io/kalavai-net/llamacpp-cuda:b8941-1
-          command: 
-          - bash
-          - -c
-          - |
-            echo "Starting server..."
-            echo "SERVER_ADDRESS: $SERVER_ADDRESS"
-            echo "WORKERS_ADDRESSES: $WORKERS_ADDRESSES"
-            # run model server
-            export WORKERS=$(/workspace/get_workers_address.sh --rpc_port=50052 --rpc_servers="${WORKERS_ADDRESSES}")
-            /workspace/run_api_server.sh \
-              --repo_id=unsloth/gemma-3-4b-it-GGUF \
-              --quant=Q4_K_M \
-              --port=8080 \
-              --rpc_servers=$WORKERS \
-              --extra='--cache-type-k q4_0 --cache-type-v q4_0'
-          env:
-          - name: HF_TOKEN
-            value: ""
-          ports:
-            - containerPort: 8080
-          # helps scaler detect when server is ready
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          resources:
-            requests:
-              nvidia.com/gpu: "1"
-              cpu: 4
-              memory: 8Gi
-              ephemeral-storage: 10Gi
-            limits:
-              nvidia.com/gpu: "1"
-              cpu: 4
-              memory: 8Gi
-              ephemeral-storage: 10Gi
+      - name: server
+        image: ghcr.io/kalavai-net/vllm-cuda:v0.22.1-4
+        command:
+        - bash
+        - -c
+        - |
+          . /home/ray/workspace/env/bin/activate
+          RAY_memory_usage_threshold=0.99 RAY_BACKEND_LOG_LEVEL=error /home/ray/workspace/ray_init.sh leader --ray_cluster_size=2 --ray_object_store_memory=1;
+          sleep 10;
+          ray status;
+          # Run model
+          /home/ray/workspace/run_model.sh \
+            --extra='--max-num-batched-tokens 4096 --max-num-seqs 24 --enable-chunked-prefill --tool-call-parser qwen3_coder --max-model-len 4000 --reasoning-parser qwen3 --kv-cache-dtype fp8_e4m3 --distributed-executor-backend ray' \
+            --pipeline_parallel_size=2 \
+            --model_id=Intel/Qwen3.6-35B-A3B-int4-mixed-AutoRound;
+        env:
+        - name: HF_TOKEN
+          value: ""
+        ports:
+          - containerPort: 8080
+        # helps scaler detect when server is ready
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            nvidia.com/gpu: "1"
+            cpu: 4
+            memory: 12Gi
+            ephemeral-storage: 36Gi
+          limits:
+            nvidia.com/gpu: "1"
+            cpu: 4
+            memory: 12Gi
+            ephemeral-storage: 36Gi
+        volumeMounts:
+          - mountPath: /dev/shm
+            name: dshm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 3Gi
     policy:
     - event: PodFailed
       action: RestartInstance
@@ -67,28 +140,37 @@ spec:
     spec:
       runtimeClassName: nvidia
       nodeSelector:
-        kalavai/region: uspor01
+        kalavai/region: frsbg01
       containers:
         - name: worker
-          image: ghcr.io/kalavai-net/llamacpp-cuda:b8941-1
+          image: ghcr.io/kalavai-net/vllm-cuda:v0.22.1-4
           # SERVER_ADDRESS points to THIS instance's server (not shared across instances).
           command:
             - bash
             - -c
             - |
-              echo "Starting worker..."
-              /workspace/run_rpc_worker.sh --rpc_port=50052
+              . /home/ray/workspace/env/bin/activate
+              echo "Connecting to server at $SERVER_ADDRESS"
+              RAY_memory_usage_threshold=0.99 RAY_BACKEND_LOG_LEVEL=error /home/ray/workspace/ray_init.sh worker --ray_address=$SERVER_ADDRESS --ray_port=6379 --ray_object_store_memory=1 --ray_block=1
           resources:
             requests:
               nvidia.com/gpu: "1"
               cpu: 4
-              memory: 8Gi
-              ephemeral-storage: 10Gi
+              memory: 12Gi
+              ephemeral-storage: 36Gi
             limits:
               nvidia.com/gpu: "1"
               cpu: 4
-              memory: 8Gi
-              ephemeral-storage: 10Gi
+              memory: 12Gi
+              ephemeral-storage: 36Gi
+          volumeMounts:
+          - mountPath: /dev/shm
+            name: dshm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 3Gi
     policy:
     - event: PodFailed
       action: ReplacePod
@@ -101,42 +183,26 @@ spec:
     - event: Unknown
       action: ReplacePod
   service:
+    name: scale-vllm-service
     port: 8080           
     targetPort: 8080     
-    stickySession: true  
+    stickySession: false  
     stickySessionTimeoutSeconds: 10800  
-    type: NodePort  
-  autoScaling:
-    enabled: false       
-    hosts:
-      - llamacpp.spaces.kalavai.net       
-    pathPrefixes:
-      - "/"              
-    replicas:
-      min: 0            
-      max: 2
-    scaledownPeriod: 300
-    scalingMetric:
-      requestRate:
-        granularity: 1s
-        targetValue: 1
-        window: 1m
-      # concurrency:
-      #   targetValue: 10
+    type: NodePort
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: scale-llamacpp-ingress
+  name: scale-vllm-ingress
 spec:
   ingressClassName: traefik
   rules:
-  - host: llamacpp.spaces.kalavai.net
+  - host: model.spaces.kalavai.net
     http:
       paths:
       - backend:
           service:
-            name: scale-llamacpp-service
+            name: scale-vllm-service
             port:
               number: 8080 # match internal port
         path: /

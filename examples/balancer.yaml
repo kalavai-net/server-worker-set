@@ -4,7 +4,7 @@ metadata:
   name: my-sws
   namespace: default
 spec:
-  replicas: 2              # number of (server + N-worker) instances — KEDA scales this
+  replicas: 3              # number of (server + N-worker) instances — KEDA scales this
   workersPerInstance: 0   # each instance has 1 server + 2 workers
   server:
     spec:
@@ -92,7 +92,7 @@ spec:
     type: NodePort  # ClusterIP (default) or NodePort
   loadBalancer:
     enabled: true
-    trafficPolicy: RANDOM
+    trafficPolicy: ROUND_ROBIN
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
